@@ -36,8 +36,11 @@ const App: React.FC = () => {
   useEffect(() => {
     // 1. Setup Auth Listener immediately (fastest way to get state)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      // Once we have a definitive answer (session or null), we stop the full-screen loader
-      setIsInitializing(false);
+      // PERF: Clear the main loader as soon as we know IF there is a session or not.
+      // We don't wait for the profile to finish fetching to unlock the app shell.
+      if (isInitializing) {
+        setIsInitializing(false);
+      }
 
       if (session) {
         setIsSyncingProfile(true);
@@ -55,15 +58,15 @@ const App: React.FC = () => {
       }
     });
 
-    // 2. Backup: Check session once in case listener is slow
+    // 2. Backup: Manual check
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session && isInitializing) {
         setIsInitializing(false);
       }
     });
 
-    // 3. Safety release: Don't let user wait more than 2 seconds for the loader
-    const timeout = setTimeout(() => setIsInitializing(false), 2000);
+    // 3. Safety release: Don't let user wait more than 1.2 seconds for the loader
+    const timeout = setTimeout(() => setIsInitializing(false), 1200);
 
     return () => {
       subscription.unsubscribe();

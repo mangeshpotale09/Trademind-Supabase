@@ -41,13 +41,16 @@ const PaymentView: React.FC<PaymentViewProps> = ({ user, onPaymentSubmitted }) =
     setError(null);
     try {
       await submitPaymentProof(user.id, selectedPlan, file);
-      alert("Payment submitted successfully! An admin will review your proof and grant access shortly.");
+      alert("Payment submitted successfully! An admin will review your proof shortly.");
       onPaymentSubmitted();
     } catch (err: any) {
       console.error("Payment Submission Error:", err);
-      const msg = err.message || 'An unexpected error occurred during submission.';
-      if (msg.includes('Bucket')) {
-        setError("CRITICAL_CONFIGURATION_ERROR: Storage bucket 'payment-proofs' was not found. Please go to your Supabase SQL Editor and run the content of schema.sql.");
+      const msg = err.message || 'An unexpected error occurred.';
+      
+      if (msg.includes('RECURSION') || msg.includes('recursion')) {
+        setError("DATABASE_RLS_ERROR: Infinite recursion detected in your Supabase policies. ACTION REQUIRED: Copy the content of 'schema.sql' and run it in the Supabase SQL Editor to reset your permissions safely.");
+      } else if (msg.includes('Bucket')) {
+        setError("STORAGE_ERROR: Bucket 'payment-proofs' missing. Ensure buckets are created in Supabase.");
       } else {
         setError(msg);
       }

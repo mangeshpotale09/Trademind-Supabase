@@ -1,6 +1,9 @@
 
--- 1. DYNAMIC CLEANUP (The "Nuke" Option for infinite recursion)
--- This block finds every policy on 'profiles' and 'trades' and drops it.
+-- ==========================================
+-- TERMINAL RECOVERY SCRIPT (NON-RECURSIVE)
+-- ==========================================
+
+-- 1. NUKE ALL EXISTING POLICIES (Cleans up the recursion loop)
 do $$ 
 declare
     pol record;
@@ -10,7 +13,7 @@ begin
     end loop;
 end $$;
 
--- 2. TABLE RE-VERIFICATION
+-- 2. ENSURE TABLES EXIST
 create table if not exists public.profiles (
   id uuid references auth.users on delete cascade primary key,
   display_id text unique,
@@ -26,48 +29,48 @@ create table if not exists public.profiles (
   selected_plan text
 );
 
--- 3. NEW NON-RECURSIVE POLICIES
+-- 3. ENABLE RLS
 alter table public.profiles enable row level security;
-
--- Policy A: Users can see and edit only their own row (Zero recursion)
-create policy "p_user_own_profile" on public.profiles
-for all using (auth.uid() = id);
-
--- Policy B: The specific admin email gets full access (Checked via JWT, Zero recursion)
-create policy "p_admin_global_access" on public.profiles
-for all using (auth.jwt() ->> 'email' = 'mangeshpotale09@gmail.com');
-
--- 4. TRADES RLS
 alter table public.trades enable row level security;
-
-create policy "p_trades_owner" on public.trades
-for all using (auth.uid() = user_id);
-
-create policy "p_trades_admin" on public.trades
-for all using (auth.jwt() ->> 'email' = 'mangeshpotale09@gmail.com');
-
--- 5. TRANSACTIONS RLS
 alter table public.transactions enable row level security;
 
-create policy "p_transactions_owner" on public.transactions
+-- 4. NON-RECURSIVE PROFILES POLICIES
+-- Users can only see and edit their own identity
+create policy "profile_owner_policy" on public.profiles
+for all using (auth.uid() = id) with check (auth.uid() = id);
+
+-- Admin bypass using JWT (Does not query the table, preventing recursion)
+create policy "profile_admin_policy" on public.profiles
+for all using (
+  (auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com'
+);
+
+-- 5. TRADES POLICIES
+create policy "trades_owner_policy" on public.trades
+for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create policy "trades_admin_policy" on public.trades
+for all using (
+  (auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com'
+);
+
+-- 6. TRANSACTIONS POLICIES
+create policy "tx_owner_policy" on public.transactions
 for all using (auth.uid() = user_id);
 
-create policy "p_transactions_admin" on public.transactions
-for all using (auth.jwt() ->> 'email' = 'mangeshpotale09@gmail.com');
+create policy "tx_admin_policy" on public.transactions
+for all using (
+  (auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com'
+);
 
--- 6. STORAGE BUCKETS
-insert into storage.buckets (id, name, public) 
-values ('trade-attachments', 'trade-attachments', true)
-on conflict (id) do update set public = true;
+-- 7. SETUP STORAGE ACCESS
+-- Allow authenticated users to upload to their own folders in buckets
+-- Make sure buckets 'trade-attachments' and 'payment-proofs' are created in UI
 
-insert into storage.buckets (id, name, public) 
-values ('payment-proofs', 'payment-proofs', true)
-on conflict (id) do update set public = true;
-
--- 7. REFRESH API CACHE
-notify pgrst, 'reload schema';
-
--- 8. FINAL SYNC
+-- 8. INITIALIZE ADMIN (Run this after first login)
 update public.profiles 
 set role = 'ADMIN', is_paid = true, status = 'APPROVED' 
 where lower(email) = 'mangeshpotale09@gmail.com';
+
+-- Refresh the postgrest schema cache
+notify pgrst, 'reload schema';

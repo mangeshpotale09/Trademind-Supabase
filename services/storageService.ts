@@ -30,10 +30,34 @@ export const getCurrentUser = async (passedSession?: any): Promise<User | null> 
     }
 
     const ADMIN_EMAIL = 'mangeshpotale09@gmail.com';
+    const email = session.user.email?.toLowerCase().trim();
+    const isHardcodedAdmin = email === ADMIN_EMAIL;
 
-    // Fast check for local sync/optimistic UI
-    const isHardcodedAdmin = session.user.email?.toLowerCase() === ADMIN_EMAIL;
+    // --- OPTIMISTIC FAST-PATH FOR ADMIN ---
+    if (isHardcodedAdmin) {
+      const optimisticAdmin: User = {
+        id: session.user.id,
+        displayId: `ROOT-MASTER`,
+        email: email || '',
+        name: session.user.user_metadata?.name || 'Mangesh (Admin)',
+        isPaid: true,
+        role: UserRole.ADMIN,
+        status: UserStatus.APPROVED,
+        joinedAt: new Date().toISOString(),
+        ownReferralCode: 'ADMIN-ROOT'
+      };
 
+      // Background sync
+      supabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle().then(({ data, error }) => {
+        if (error && error.message.includes('recursion')) {
+          console.error("CRITICAL: Database RLS recursion detected. Run schema.sql fix.");
+        }
+      });
+
+      return optimisticAdmin;
+    }
+
+    // --- REGULAR USER PATH ---
     const { data: profileData, error: profileError } = await supabase
       .from('profiles')
       .select('*')
@@ -41,6 +65,9 @@ export const getCurrentUser = async (passedSession?: any): Promise<User | null> 
       .maybeSingle();
 
     if (profileError) {
+      if (profileError.message.includes('recursion')) {
+        throw new Error("DATABASE_RLS_RECURSION: Please run the updated schema.sql in Supabase SQL Editor.");
+      }
       console.warn("Profile fetch error:", profileError.message);
     }
 
@@ -50,9 +77,9 @@ export const getCurrentUser = async (passedSession?: any): Promise<User | null> 
         displayId: `TM-${session.user.id.substring(0, 6).toUpperCase()}`,
         email: session.user.email || '',
         name: session.user.user_metadata?.name || 'Trader',
-        isPaid: isHardcodedAdmin,
-        role: isHardcodedAdmin ? UserRole.ADMIN : UserRole.USER,
-        status: isHardcodedAdmin ? UserStatus.APPROVED : UserStatus.PENDING,
+        isPaid: false,
+        role: UserRole.USER,
+        status: UserStatus.PENDING,
         joinedAt: new Date().toISOString(),
         ownReferralCode: ''
       };
@@ -72,7 +99,7 @@ export const getCurrentUser = async (passedSession?: any): Promise<User | null> 
       paymentScreenshot: profileData.payment_screenshot,
       selectedPlan: profileData.selected_plan as PlanType
     };
-  } catch (err) {
+  } catch (err: any) {
     console.error("Critical Auth Resolve Failure:", err);
     return null;
   }
@@ -162,6 +189,9 @@ export const submitPaymentProof = async (userId: string, plan: PlanType, file: F
     .eq('id', authId);
 
   if (updateError) {
+    if (updateError.message.includes('recursion')) {
+      throw new Error("RECURSION_ERROR: Your database has conflicting RLS policies. Please run the provided schema.sql in Supabase.");
+    }
     console.error("Profile update failed after upload:", updateError);
     throw updateError;
   }
@@ -173,9 +203,12 @@ export const getStoredTrades = async (userId?: string): Promise<Trade[]> => {
   try {
     let query = supabase.from('trades').select('*');
     if (userId) query = query.eq('user_id', userId);
-    const { data, error } = await query.order('entry_date', { ascending: false }).limit(200); // Limit to prevent massive initial load
+    const { data, error } = await query.order('entry_date', { ascending: false }).limit(200); 
     
-    if (error) throw error;
+    if (error) {
+      if (error.message.includes('recursion')) throw new Error("Database recursion error detected.");
+      throw error;
+    }
 
     return (data || []).map(t => ({
       id: t.id,
@@ -241,9 +274,42 @@ export const saveTrade = async (trade: Trade): Promise<void> => {
   }
 };
 
+// --- Bulk operations for Cloud Sync ---
+
+/**
+ * Saves multiple trades in bulk to the database.
+ * Used for cloud vault restoration.
+ */
 export const saveTrades = async (trades: Trade[]): Promise<void> => {
   for (const trade of trades) {
     await saveTrade(trade);
+  }
+};
+
+/**
+ * Saves multiple user profiles in bulk to the database.
+ * Used for cloud vault restoration.
+ */
+export const saveUsers = async (users: User[]): Promise<void> => {
+  for (const user of users) {
+    const payload = {
+      id: user.id,
+      display_id: user.displayId,
+      email: user.email,
+      name: user.name,
+      mobile: user.mobile,
+      is_paid: user.isPaid,
+      role: user.role,
+      status: user.status,
+      joined_at: user.joinedAt,
+      own_referral_code: user.ownReferralCode,
+      payment_screenshot: user.paymentScreenshot,
+      selected_plan: user.selectedPlan
+    };
+    const { error } = await supabase
+      .from('profiles')
+      .upsert(payload, { onConflict: 'id' });
+    if (error) throw error;
   }
 };
 
@@ -287,31 +353,6 @@ export const getAdminOverviewStats = async () => {
     totalTransactions: txCount.count || 0,
     pendingApprovals: pendingCount.count || 0
   };
-};
-
-export const saveUsers = async (users: User[]): Promise<void> => {
-  for (const user of users) {
-    const payload = {
-      id: user.id,
-      display_id: user.displayId,
-      email: user.email,
-      name: user.name,
-      mobile: user.mobile,
-      is_paid: user.isPaid,
-      role: user.role,
-      status: user.status,
-      joined_at: user.joinedAt,
-      own_referral_code: user.ownReferralCode,
-      payment_screenshot: user.paymentScreenshot,
-      selected_plan: user.selectedPlan
-    };
-
-    const { error } = await supabase
-      .from('profiles')
-      .upsert(payload, { onConflict: 'id' });
-
-    if (error) throw error;
-  }
 };
 
 export const updateUserStatus = async (userId: string, status: UserStatus): Promise<void> => {
