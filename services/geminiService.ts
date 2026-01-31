@@ -72,6 +72,7 @@ export const getWeeklyInsights = async (trades: Trade[]): Promise<string | null>
   }
 };
 
+// Fix: Updated model to gemini-3-pro-image-preview for googleSearch support and added grounding source extraction
 export const queryTradeHistory = async (query: string, trades: Trade[]): Promise<string | null> => {
   if (!process.env.API_KEY) return null;
   
@@ -79,7 +80,7 @@ export const queryTradeHistory = async (query: string, trades: Trade[]): Promise
   
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
+      model: 'gemini-3-pro-image-preview',
       contents: `User Query: ${query}
       
       Based on the following trade data:
@@ -91,7 +92,21 @@ export const queryTradeHistory = async (query: string, trades: Trade[]): Promise
       }
     });
 
-    return response.text || null;
+    let text = response.text || '';
+    
+    // Fix: Extract grounding chunks and append to the text response as required by the guidelines
+    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+    if (groundingChunks && groundingChunks.length > 0) {
+      const links = groundingChunks
+        .map((chunk: any) => chunk.web ? `\n- [${chunk.web.title}](${chunk.web.uri})` : '')
+        .filter(Boolean)
+        .join('');
+      if (links) {
+        text += `\n\n**Sources:**${links}`;
+      }
+    }
+
+    return text || null;
   } catch (error) {
     console.error("Query error:", error);
     return null;

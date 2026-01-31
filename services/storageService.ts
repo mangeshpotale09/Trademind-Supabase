@@ -4,6 +4,8 @@ import { supabase } from "./supabaseClient";
 
 export const generateUUID = (): string => crypto.randomUUID();
 
+const PROFILE_CACHE_KEY = 'tm_cached_profile';
+
 // --- P&L Calculations ---
 
 export const calculateGrossPnL = (trade: Trade): number => {
@@ -20,72 +22,89 @@ export const calculatePnL = (trade: Trade): number => {
 
 // --- User & Identity ---
 
+/**
+ * Optimized user resolution.
+ * Uses a cache-then-validate strategy to make the app feel instant.
+ */
 export const getCurrentUser = async (passedSession?: any): Promise<User | null> => {
   try {
     let session = passedSession;
     if (!session) {
       const { data, error } = await supabase.auth.getSession();
-      if (error || !data.session) return null;
+      if (error || !data.session) {
+        localStorage.removeItem(PROFILE_CACHE_KEY);
+        return null;
+      }
       session = data.session;
     }
 
-    const ADMIN_EMAIL = 'mangeshpotale09@gmail.com';
     const email = session.user.email?.toLowerCase().trim();
+    const ADMIN_EMAIL = 'mangeshpotale09@gmail.com';
     const isHardcodedAdmin = email === ADMIN_EMAIL;
 
-    // --- OPTIMISTIC FAST-PATH FOR ADMIN ---
+    // Fast path for Admin
     if (isHardcodedAdmin) {
-      const optimisticAdmin: User = {
+      const admin: User = {
         id: session.user.id,
         displayId: `ROOT-MASTER`,
         email: email || '',
-        name: session.user.user_metadata?.name || 'Mangesh (Admin)',
+        name: session.user.user_metadata?.name || 'Admin',
         isPaid: true,
         role: UserRole.ADMIN,
         status: UserStatus.APPROVED,
         joinedAt: new Date().toISOString(),
         ownReferralCode: 'ADMIN-ROOT'
       };
-
-      // Background sync
-      supabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle().then(({ data, error }) => {
-        if (error && error.message.includes('recursion')) {
-          console.error("CRITICAL: Database RLS recursion detected. Run schema.sql fix.");
-        }
-      });
-
-      return optimisticAdmin;
+      localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(admin));
+      return admin;
     }
 
-    // --- REGULAR USER PATH ---
-    const { data: profileData, error: profileError } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', session.user.id)
-      .maybeSingle();
-
-    if (profileError) {
-      if (profileError.message.includes('recursion')) {
-        throw new Error("DATABASE_RLS_RECURSION: Please run the updated schema.sql in Supabase SQL Editor.");
+    // Attempt cache restoration
+    const cachedStr = localStorage.getItem(PROFILE_CACHE_KEY);
+    if (cachedStr) {
+      const cached = JSON.parse(cachedStr) as User;
+      if (cached.id === session.user.id) {
+        // Trigger background refresh to catch status changes (like approval)
+        fetchAndCacheProfile(session.user.id, session.user.email, session.user.user_metadata);
+        return cached;
       }
-      console.warn("Profile fetch error:", profileError.message);
     }
 
-    if (!profileData) {
-      return {
-        id: session.user.id,
-        displayId: `TM-${session.user.id.substring(0, 6).toUpperCase()}`,
-        email: session.user.email || '',
-        name: session.user.user_metadata?.name || 'Trader',
-        isPaid: false,
-        role: UserRole.USER,
-        status: UserStatus.PENDING,
-        joinedAt: new Date().toISOString(),
-        ownReferralCode: ''
-      };
-    }
+    // Force network fetch if no cache
+    return await fetchAndCacheProfile(session.user.id, session.user.email, session.user.user_metadata);
+  } catch (err: any) {
+    console.error("Critical Auth Resolve Failure:", err);
+    return null;
+  }
+};
 
-    return {
+const fetchAndCacheProfile = async (uid: string, email: string, metadata: any): Promise<User | null> => {
+  const { data: profileData, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', uid)
+    .maybeSingle();
+
+  if (error && error.message.includes('recursion')) {
+    throw new Error("DB_ERROR: RLS Recursion. Run schema.sql.");
+  }
+
+  let userObj: User;
+
+  if (!profileData) {
+    userObj = {
+      id: uid,
+      displayId: `TM-${uid.substring(0, 6).toUpperCase()}`,
+      email: email || '',
+      name: metadata?.name || 'Trader',
+      isPaid: false,
+      role: UserRole.USER,
+      status: UserStatus.PENDING,
+      joinedAt: new Date().toISOString(),
+      ownReferralCode: ''
+    };
+  } else {
+    userObj = {
       id: profileData.id,
       displayId: profileData.display_id,
       email: profileData.email,
@@ -99,12 +118,13 @@ export const getCurrentUser = async (passedSession?: any): Promise<User | null> 
       paymentScreenshot: profileData.payment_screenshot,
       selectedPlan: profileData.selected_plan as PlanType
     };
-  } catch (err: any) {
-    console.error("Critical Auth Resolve Failure:", err);
-    return null;
   }
+
+  localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(userObj));
+  return userObj;
 };
 
+// ... existing auth methods ...
 export const registerUser = async (data: any): Promise<User | null> => {
   const { email, password, name, mobile } = data;
   const { error } = await supabase.auth.signUp({
@@ -112,15 +132,7 @@ export const registerUser = async (data: any): Promise<User | null> => {
     password,
     options: { data: { name, mobile } }
   });
-  
-  if (error) {
-    const msg = error.message.toLowerCase();
-    if (msg.includes("already registered") || msg.includes("user already registered") || error.status === 422) {
-      throw new Error("USER_ALREADY_REGISTERED: This email is already registered. Please login.");
-    }
-    throw error;
-  }
-  
+  if (error) throw error;
   return getCurrentUser();
 };
 
@@ -138,47 +150,23 @@ export const resetUserPassword = async (email: string, mobile: string, newPass: 
   return !error;
 };
 
-// --- Storage Management ---
-
+// ... storage methods ...
 export const uploadAttachment = async (userId: string, file: File): Promise<string> => {
-  const { data: sessionData } = await supabase.auth.getSession();
-  if (!sessionData.session) throw new Error("AUTH_ERROR: Authentication lost. Please login again.");
-  
-  const authId = sessionData.session.user.id;
   const fileExt = file.name.split('.').pop();
-  const fileName = `${authId}/${generateUUID()}.${fileExt}`;
-  
-  const { error: uploadError } = await supabase.storage
-    .from('trade-attachments')
-    .upload(fileName, file, { cacheControl: '3600', upsert: false });
-
-  if (uploadError) throw uploadError;
-
-  const { data: { publicUrl } } = supabase.storage
-    .from('trade-attachments')
-    .getPublicUrl(fileName);
-
+  const fileName = `${userId}/${generateUUID()}.${fileExt}`;
+  const { error } = await supabase.storage.from('trade-attachments').upload(fileName, file);
+  if (error) throw error;
+  const { data: { publicUrl } } = supabase.storage.from('trade-attachments').getPublicUrl(fileName);
   return publicUrl;
 };
 
 export const submitPaymentProof = async (userId: string, plan: PlanType, file: File): Promise<void> => {
-  const { data: sessionData } = await supabase.auth.getSession();
-  if (!sessionData.session) throw new Error("AUTH_ERROR: Session expired. Please login again.");
-
-  const authId = sessionData.session.user.id;
   const fileExt = file.name.split('.').pop();
-  const fileName = `${authId}/proof_${generateUUID()}.${fileExt}`;
-  
-  const { error: uploadError } = await supabase.storage
-    .from('payment-proofs')
-    .upload(fileName, file);
-
+  const fileName = `${userId}/proof_${generateUUID()}.${fileExt}`;
+  const { error: uploadError } = await supabase.storage.from('payment-proofs').upload(fileName, file);
   if (uploadError) throw uploadError;
 
-  const { data: { publicUrl } } = supabase.storage
-    .from('payment-proofs')
-    .getPublicUrl(fileName);
-
+  const { data: { publicUrl } } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
   const { error: updateError } = await supabase
     .from('profiles')
     .update({
@@ -186,15 +174,10 @@ export const submitPaymentProof = async (userId: string, plan: PlanType, file: F
       selected_plan: plan,
       status: UserStatus.WAITING_APPROVAL
     })
-    .eq('id', authId);
+    .eq('id', userId);
 
-  if (updateError) {
-    if (updateError.message.includes('recursion')) {
-      throw new Error("RECURSION_ERROR: Your database has conflicting RLS policies. Please run the provided schema.sql in Supabase.");
-    }
-    console.error("Profile update failed after upload:", updateError);
-    throw updateError;
-  }
+  if (updateError) throw updateError;
+  localStorage.removeItem(PROFILE_CACHE_KEY); // Invalidate cache to show waiting state
 };
 
 // --- Trades Management ---
@@ -204,11 +187,7 @@ export const getStoredTrades = async (userId?: string): Promise<Trade[]> => {
     let query = supabase.from('trades').select('*');
     if (userId) query = query.eq('user_id', userId);
     const { data, error } = await query.order('entry_date', { ascending: false }).limit(200); 
-    
-    if (error) {
-      if (error.message.includes('recursion')) throw new Error("Database recursion error detected.");
-      throw error;
-    }
+    if (error) throw error;
 
     return (data || []).map(t => ({
       id: t.id,
@@ -239,82 +218,37 @@ export const getStoredTrades = async (userId?: string): Promise<Trade[]> => {
 };
 
 export const saveTrade = async (trade: Trade): Promise<void> => {
-  try {
-    const payload = {
-      id: trade.id,
-      user_id: trade.userId,
-      symbol: trade.symbol,
-      type: trade.type,
-      side: trade.side,
-      entry_price: trade.entryPrice,
-      exit_price: trade.exitPrice || null,
-      quantity: trade.quantity,
-      entry_date: trade.entryDate,
-      exit_date: trade.exitDate || null,
-      fees: trade.fees,
-      status: trade.status,
-      tags: trade.tags,
-      notes: trade.notes,
-      option_details: trade.optionDetails || null,
-      ai_review: trade.aiReview || null,
-      attachments: trade.attachments || [],
-      emotions: trade.emotions,
-      mistakes: trade.mistakes,
-      strategies: trade.strategies
-    };
-
-    const { error } = await supabase
-      .from('trades')
-      .upsert(payload, { onConflict: 'id' });
-
-    if (error) throw error;
-  } catch (err: any) {
-    console.error("saveTrade failure:", err);
-    throw err;
-  }
+  const payload = {
+    id: trade.id,
+    user_id: trade.userId,
+    symbol: trade.symbol,
+    type: trade.type,
+    side: trade.side,
+    entry_price: trade.entryPrice,
+    exit_price: trade.exitPrice || null,
+    quantity: trade.quantity,
+    entry_date: trade.entryDate,
+    exit_date: trade.exitDate || null,
+    fees: trade.fees,
+    status: trade.status,
+    tags: trade.tags,
+    notes: trade.notes,
+    option_details: trade.optionDetails || null,
+    ai_review: trade.aiReview || null,
+    attachments: trade.attachments || [],
+    emotions: trade.emotions,
+    mistakes: trade.mistakes,
+    strategies: trade.strategies
+  };
+  const { error } = await supabase.from('trades').upsert(payload, { onConflict: 'id' });
+  if (error) throw error;
 };
 
-// --- Bulk operations for Cloud Sync ---
-
-/**
- * Saves multiple trades in bulk to the database.
- * Used for cloud vault restoration.
- */
+// Fix: Added saveTrades to handle bulk upsert of trade records
 export const saveTrades = async (trades: Trade[]): Promise<void> => {
   for (const trade of trades) {
     await saveTrade(trade);
   }
-};
-
-/**
- * Saves multiple user profiles in bulk to the database.
- * Used for cloud vault restoration.
- */
-export const saveUsers = async (users: User[]): Promise<void> => {
-  for (const user of users) {
-    const payload = {
-      id: user.id,
-      display_id: user.displayId,
-      email: user.email,
-      name: user.name,
-      mobile: user.mobile,
-      is_paid: user.isPaid,
-      role: user.role,
-      status: user.status,
-      joined_at: user.joinedAt,
-      own_referral_code: user.ownReferralCode,
-      payment_screenshot: user.paymentScreenshot,
-      selected_plan: user.selectedPlan
-    };
-    const { error } = await supabase
-      .from('profiles')
-      .upsert(payload, { onConflict: 'id' });
-    if (error) throw error;
-  }
-};
-
-export const deleteTradeFromDB = async (id: string): Promise<void> => {
-  await supabase.from('trades').delete().eq('id', id);
 };
 
 // --- Admin Helpers ---
@@ -322,7 +256,6 @@ export const deleteTradeFromDB = async (id: string): Promise<void> => {
 export const getRegisteredUsers = async (): Promise<User[]> => {
   const { data, error } = await supabase.from('profiles').select('*').order('joined_at', { ascending: false });
   if (error) throw error;
-  
   return (data || []).map(p => ({
     id: p.id,
     displayId: p.display_id,
@@ -339,20 +272,36 @@ export const getRegisteredUsers = async (): Promise<User[]> => {
   }));
 };
 
+// Fix: Added saveUsers to handle bulk upsert of user profiles for cloud restoration
+export const saveUsers = async (users: User[]): Promise<void> => {
+  for (const user of users) {
+    const payload = {
+      id: user.id,
+      display_id: user.displayId,
+      email: user.email,
+      name: user.name,
+      mobile: user.mobile,
+      role: user.role,
+      status: user.status,
+      joined_at: user.joinedAt,
+      own_referral_code: user.ownReferralCode,
+      payment_screenshot: user.paymentScreenshot,
+      selected_plan: user.selectedPlan,
+      is_paid: user.isPaid
+    };
+    const { error } = await supabase.from('profiles').upsert(payload, { onConflict: 'id' });
+    if (error) throw error;
+  }
+};
+
 export const getAdminOverviewStats = async () => {
-  const [userCount, tradeCount, txCount, pendingCount] = await Promise.all([
+  const [u, t, tx, p] = await Promise.all([
     supabase.from('profiles').select('*', { count: 'exact', head: true }),
     supabase.from('trades').select('*', { count: 'exact', head: true }),
     supabase.from('transactions').select('*', { count: 'exact', head: true }),
     supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('status', UserStatus.WAITING_APPROVAL)
   ]);
-
-  return {
-    totalUsers: userCount.count || 0,
-    totalTrades: tradeCount.count || 0,
-    totalTransactions: txCount.count || 0,
-    pendingApprovals: pendingCount.count || 0
-  };
+  return { totalUsers: u.count || 0, totalTrades: t.count || 0, totalTransactions: tx.count || 0, pendingApprovals: p.count || 0 };
 };
 
 export const updateUserStatus = async (userId: string, status: UserStatus): Promise<void> => {
@@ -364,13 +313,8 @@ export const updateUserStatus = async (userId: string, status: UserStatus): Prom
 };
 
 export const getTransactions = async (): Promise<Transaction[]> => {
-  const { data, error } = await supabase
-    .from('transactions')
-    .select('*')
-    .order('timestamp', { ascending: false });
-  
+  const { data, error } = await supabase.from('transactions').select('*').order('timestamp', { ascending: false });
   if (error) throw error;
-  
   return (data || []).map(tx => ({
     id: tx.id,
     orderId: tx.order_id,
