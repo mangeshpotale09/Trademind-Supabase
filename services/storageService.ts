@@ -6,6 +6,20 @@ export const generateUUID = (): string => crypto.randomUUID();
 
 const PROFILE_CACHE_KEY = 'tm_cached_profile';
 
+// Plan pricing logic
+export const PLAN_PRICES: Record<PlanType, number> = {
+  [PlanType.MONTHLY]: 299,
+  [PlanType.SIX_MONTHS]: 1499,
+  [PlanType.ANNUAL]: 2499
+};
+
+// Plan duration logic (in days)
+export const PLAN_DURATIONS: Record<PlanType, number> = {
+  [PlanType.MONTHLY]: 30,
+  [PlanType.SIX_MONTHS]: 180,
+  [PlanType.ANNUAL]: 365
+};
+
 // --- P&L Calculations ---
 
 export const calculateGrossPnL = (trade: Trade): number => {
@@ -22,10 +36,6 @@ export const calculatePnL = (trade: Trade): number => {
 
 // --- User & Identity ---
 
-/**
- * Optimized user resolution.
- * Uses a cache-then-validate strategy to make the app feel instant.
- */
 export const getCurrentUser = async (passedSession?: any): Promise<User | null> => {
   try {
     let session = passedSession;
@@ -42,7 +52,6 @@ export const getCurrentUser = async (passedSession?: any): Promise<User | null> 
     const ADMIN_EMAIL = 'mangeshpotale09@gmail.com';
     const isHardcodedAdmin = email === ADMIN_EMAIL;
 
-    // Fast path for Admin
     if (isHardcodedAdmin) {
       const admin: User = {
         id: session.user.id,
@@ -59,18 +68,15 @@ export const getCurrentUser = async (passedSession?: any): Promise<User | null> 
       return admin;
     }
 
-    // Attempt cache restoration
     const cachedStr = localStorage.getItem(PROFILE_CACHE_KEY);
     if (cachedStr) {
       const cached = JSON.parse(cachedStr) as User;
       if (cached.id === session.user.id) {
-        // Trigger background refresh to catch status changes (like approval)
         fetchAndCacheProfile(session.user.id, session.user.email, session.user.user_metadata);
         return cached;
       }
     }
 
-    // Force network fetch if no cache
     return await fetchAndCacheProfile(session.user.id, session.user.email, session.user.user_metadata);
   } catch (err: any) {
     console.error("Critical Auth Resolve Failure:", err);
@@ -116,7 +122,9 @@ const fetchAndCacheProfile = async (uid: string, email: string, metadata: any): 
       joinedAt: profileData.joined_at,
       ownReferralCode: profileData.own_referral_code,
       paymentScreenshot: profileData.payment_screenshot,
-      selectedPlan: profileData.selected_plan as PlanType
+      selectedPlan: profileData.selected_plan as PlanType,
+      amountPaid: profileData.amount_paid,
+      expiryDate: profileData.expiry_date
     };
   }
 
@@ -124,7 +132,7 @@ const fetchAndCacheProfile = async (uid: string, email: string, metadata: any): 
   return userObj;
 };
 
-// ... existing auth methods ...
+// --- Auth Methods ---
 export const registerUser = async (data: any): Promise<User | null> => {
   const { email, password, name, mobile } = data;
   const { error } = await supabase.auth.signUp({
@@ -150,7 +158,7 @@ export const resetUserPassword = async (email: string, mobile: string, newPass: 
   return !error;
 };
 
-// ... storage methods ...
+// --- Storage Methods ---
 export const uploadAttachment = async (userId: string, file: File): Promise<string> => {
   const fileExt = file.name.split('.').pop();
   const fileName = `${userId}/${generateUUID()}.${fileExt}`;
@@ -163,21 +171,38 @@ export const uploadAttachment = async (userId: string, file: File): Promise<stri
 export const submitPaymentProof = async (userId: string, plan: PlanType, file: File): Promise<void> => {
   const fileExt = file.name.split('.').pop();
   const fileName = `${userId}/proof_${generateUUID()}.${fileExt}`;
+  
+  // 1. Upload file to Storage
   const { error: uploadError } = await supabase.storage.from('payment-proofs').upload(fileName, file);
-  if (uploadError) throw uploadError;
+  if (uploadError) {
+    if (uploadError.message.includes('bucket not found')) {
+      throw new Error("BUCKET_ERROR: Storage bucket 'payment-proofs' not found. Create it in Supabase dashboard.");
+    }
+    throw uploadError;
+  }
 
+  // 2. Get Public URL
   const { data: { publicUrl } } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
+  const amount = PLAN_PRICES[plan];
+
+  // 3. Update Database Profile
   const { error: updateError } = await supabase
     .from('profiles')
     .update({
       payment_screenshot: publicUrl,
       selected_plan: plan,
+      amount_paid: amount,
       status: UserStatus.WAITING_APPROVAL
     })
     .eq('id', userId);
 
-  if (updateError) throw updateError;
-  localStorage.removeItem(PROFILE_CACHE_KEY); // Invalidate cache to show waiting state
+  if (updateError) {
+    if (updateError.message.includes('amount_paid')) {
+      throw new Error("SCHEMA_ERROR: Database column 'amount_paid' is missing. Action: Copy the updated schema.sql and run it in the Supabase SQL Editor.");
+    }
+    throw updateError;
+  }
+  localStorage.removeItem(PROFILE_CACHE_KEY);
 };
 
 // --- Trades Management ---
@@ -244,11 +269,15 @@ export const saveTrade = async (trade: Trade): Promise<void> => {
   if (error) throw error;
 };
 
-// Fix: Added saveTrades to handle bulk upsert of trade records
 export const saveTrades = async (trades: Trade[]): Promise<void> => {
   for (const trade of trades) {
     await saveTrade(trade);
   }
+};
+
+export const deleteTradeFromDB = async (id: string): Promise<void> => {
+  const { error } = await supabase.from('trades').delete().eq('id', id);
+  if (error) throw error;
 };
 
 // --- Admin Helpers ---
@@ -268,11 +297,12 @@ export const getRegisteredUsers = async (): Promise<User[]> => {
     joinedAt: p.joined_at,
     ownReferralCode: p.own_referral_code,
     paymentScreenshot: p.payment_screenshot,
-    selectedPlan: p.selected_plan as PlanType
+    selectedPlan: p.selected_plan as PlanType,
+    amountPaid: p.amount_paid,
+    expiryDate: p.expiry_date
   }));
 };
 
-// Fix: Added saveUsers to handle bulk upsert of user profiles for cloud restoration
 export const saveUsers = async (users: User[]): Promise<void> => {
   for (const user of users) {
     const payload = {
@@ -287,7 +317,9 @@ export const saveUsers = async (users: User[]): Promise<void> => {
       own_referral_code: user.ownReferralCode,
       payment_screenshot: user.paymentScreenshot,
       selected_plan: user.selectedPlan,
-      is_paid: user.isPaid
+      is_paid: user.isPaid,
+      amount_paid: user.amountPaid,
+      expiry_date: user.expiryDate
     };
     const { error } = await supabase.from('profiles').upsert(payload, { onConflict: 'id' });
     if (error) throw error;
@@ -305,11 +337,30 @@ export const getAdminOverviewStats = async () => {
 };
 
 export const updateUserStatus = async (userId: string, status: UserStatus): Promise<void> => {
+  let updateData: any = { status, is_paid: status === UserStatus.APPROVED };
+
+  if (status === UserStatus.APPROVED) {
+    const { data: profile } = await supabase.from('profiles').select('selected_plan').eq('id', userId).single();
+    if (profile && profile.selected_plan) {
+      const plan = profile.selected_plan as PlanType;
+      const days = PLAN_DURATIONS[plan] || 30;
+      const expiry = new Date();
+      expiry.setDate(expiry.getDate() + days);
+      updateData.expiry_date = expiry.toISOString();
+    }
+  }
+
   const { error } = await supabase
     .from('profiles')
-    .update({ status, is_paid: status === UserStatus.APPROVED })
+    .update(updateData)
     .eq('id', userId);
-  if (error) throw error;
+    
+  if (error) {
+    if (error.message.includes('expiry_date')) {
+      throw new Error("SCHEMA_ERROR: Database column 'expiry_date' is missing. Action: Run the updated schema.sql in Supabase SQL Editor.");
+    }
+    throw error;
+  }
 };
 
 export const getTransactions = async (): Promise<Transaction[]> => {

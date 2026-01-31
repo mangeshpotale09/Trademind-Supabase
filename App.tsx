@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Trade, User, UserRole, UserStatus } from './types';
 import { 
   getStoredTrades, 
@@ -31,6 +31,7 @@ const App: React.FC = () => {
   const [isEntryFormOpen, setIsEntryFormOpen] = useState(false);
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
+  const [showPaymentFlow, setShowPaymentFlow] = useState(false);
 
   const syncIdentity = useCallback(async (session: any) => {
     const user = await getCurrentUser(session);
@@ -42,7 +43,6 @@ const App: React.FC = () => {
     let authSubscription: any;
 
     const init = async () => {
-      // Listen for auth changes
       const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (session) {
           syncIdentity(session);
@@ -54,7 +54,6 @@ const App: React.FC = () => {
       });
       authSubscription = data.subscription;
 
-      // Initial check
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         syncIdentity(session);
@@ -70,10 +69,23 @@ const App: React.FC = () => {
     };
   }, [syncIdentity]);
 
-  // Load Trades ONLY for approved users
+  // Derived Access State
+  const isAccessExpired = useMemo(() => {
+    if (!currentUser || currentUser.role === UserRole.ADMIN) return false;
+    if (!currentUser.expiryDate) return false;
+    return new Date() > new Date(currentUser.expiryDate);
+  }, [currentUser]);
+
+  const isUserApproved = useMemo(() => {
+    if (!currentUser) return false;
+    if (currentUser.role === UserRole.ADMIN) return true;
+    return currentUser.status === UserStatus.APPROVED && !isAccessExpired;
+  }, [currentUser, isAccessExpired]);
+
+  // Load Trades for authorized users
   useEffect(() => {
     const load = async () => {
-      if (currentUser?.id && (currentUser.status === UserStatus.APPROVED || currentUser.role === UserRole.ADMIN)) {
+      if (currentUser?.id && isUserApproved) {
         setIsLoading(true);
         try {
           const data = await getStoredTrades(currentUser.id);
@@ -86,12 +98,26 @@ const App: React.FC = () => {
       }
     };
     load();
-  }, [currentUser?.id, currentUser?.status, currentUser?.role]);
+  }, [currentUser?.id, isUserApproved]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
     localStorage.removeItem('tm_cached_profile');
     setCurrentUser(null);
+    setShowPaymentFlow(false);
+  };
+
+  const handleExecuteTradeClick = () => {
+    if (currentUser?.role === UserRole.ADMIN) {
+      setIsEntryFormOpen(true);
+      return;
+    }
+
+    if (!isUserApproved) {
+      setShowPaymentFlow(true);
+    } else {
+      setIsEntryFormOpen(true);
+    }
   };
 
   if (isInitializing) {
@@ -103,27 +129,12 @@ const App: React.FC = () => {
     );
   }
 
-  // 1. Gated State: No Login
+  // Gated State: No Login
   if (!currentUser) {
     return <AuthView onAuthComplete={setCurrentUser} />;
   }
 
-  // 2. Gated State: Payment Required (Role USER + Status PENDING)
-  if (currentUser.role === UserRole.USER && currentUser.status === UserStatus.PENDING) {
-    return (
-      <PaymentView 
-        user={currentUser} 
-        onPaymentSubmitted={async () => {
-          setIsLoading(true);
-          const updated = await getCurrentUser(); // Refresh after payment upload
-          setCurrentUser(updated);
-          setIsLoading(false);
-        }} 
-      />
-    );
-  }
-
-  // 3. Gated State: Review Required (Role USER + Waiting/Rejected)
+  // Gated State: WAITING_APPROVAL or REJECTED
   if (currentUser.role === UserRole.USER && (currentUser.status === UserStatus.WAITING_APPROVAL || currentUser.status === UserStatus.REJECTED)) {
     return (
       <UserVerificationStatus 
@@ -139,7 +150,35 @@ const App: React.FC = () => {
     );
   }
 
-  // 4. Authorized State: APPROVED or ADMIN
+  // Gated State: Payment Flow (triggered by Execute Trade, Banner, or Expiry)
+  if (showPaymentFlow || isAccessExpired) {
+    return (
+      <div className="animate-in fade-in duration-500 bg-[#070a13] min-h-screen">
+        <nav className="p-6 border-b border-[#1e293b] flex justify-between items-center bg-[#0e1421] sticky top-0 z-[100]">
+          <div>
+            <h2 className="text-xl font-black text-white">{isAccessExpired ? 'Access Expired' : 'Payment Subscription'}</h2>
+            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">
+              {isAccessExpired ? 'Your plan has expired. Renew to continue logging.' : 'Verification Required for Node Access'}
+            </p>
+          </div>
+          <button onClick={() => setShowPaymentFlow(false)} className="bg-white/5 p-3 rounded-full text-slate-500 hover:text-white transition-colors">
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+          </button>
+        </nav>
+        <PaymentView 
+          user={currentUser} 
+          onPaymentSubmitted={async () => {
+            setIsLoading(true);
+            const updated = await getCurrentUser(); 
+            setCurrentUser(updated);
+            setShowPaymentFlow(false);
+            setIsLoading(false);
+          }} 
+        />
+      </div>
+    );
+  }
+
   const navigationItems = [
     { id: 'dashboard', label: 'Dash', color: 'bg-emerald-500' },
     { id: 'journal', label: 'Log', color: 'bg-cyan-500' },
@@ -178,7 +217,6 @@ const App: React.FC = () => {
         ))}
       </nav>
 
-      {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 md:px-8 pt-10 pb-32">
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
           <div className="animate-in fade-in slide-in-from-left duration-700">
@@ -196,11 +234,30 @@ const App: React.FC = () => {
           
           <div className="flex items-center gap-3">
             <button onClick={handleLogout} className="px-5 py-3 rounded-xl bg-white/5 text-slate-500 hover:text-red-400 transition-all text-[9px] font-black uppercase tracking-widest border border-white/5">Exit</button>
-            <button onClick={() => setIsEntryFormOpen(true)} className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-black px-8 py-3 rounded-xl transition-all shadow-xl shadow-emerald-500/10 text-[10px] uppercase tracking-widest">Execute Trade</button>
+            <button onClick={handleExecuteTradeClick} className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-black px-8 py-3 rounded-xl transition-all shadow-xl shadow-emerald-500/10 text-[10px] uppercase tracking-widest">Execute Trade</button>
           </div>
         </header>
 
         <div className="animate-in fade-in slide-in-from-bottom-4 duration-1000">
+          {!isUserApproved && currentUser.role !== UserRole.ADMIN && (
+            <div className="mb-10 p-8 bg-amber-500/10 border border-amber-500/20 rounded-[2.5rem] flex flex-col md:flex-row items-center justify-between gap-6">
+              <div className="flex items-center gap-6">
+                <div className="w-16 h-16 bg-amber-500/10 text-amber-500 rounded-2xl flex items-center justify-center text-3xl shadow-inner border border-amber-500/10">🔑</div>
+                <div>
+                  <h4 className="text-white font-black text-sm uppercase tracking-widest">
+                    {isAccessExpired ? 'Plan Expired' : 'Authorized Access Required'}
+                  </h4>
+                  <p className="text-slate-400 text-xs mt-1">
+                    {isAccessExpired ? 'Your access has expired. Please renew your subscription to continue.' : 'Verification of payment is mandatory before accessing live trade logging and AI audit features.'}
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setShowPaymentFlow(true)} className="w-full md:w-auto bg-amber-500 text-slate-900 px-10 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-amber-500/10 hover:scale-105 transition-all">
+                {isAccessExpired ? 'Renew Access' : 'Enable Full Access'}
+              </button>
+            </div>
+          )}
+
           {activeTab === 'dashboard' && <Dashboard trades={trades} />}
           {activeTab === 'journal' && <TradeList trades={trades} onSelect={setSelectedTrade} isAdmin={currentUser.role === UserRole.ADMIN} />}
           {activeTab === 'analysis' && <AnalysisView trades={trades} />}
@@ -211,7 +268,7 @@ const App: React.FC = () => {
         </div>
       </main>
 
-      {/* Modals */}
+      {/* Entry Form Modal */}
       {isEntryFormOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-300">
           <TradeEntryForm 
@@ -231,6 +288,7 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* Trade Detail Modal */}
       {selectedTrade && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-300">
           <div className="w-full max-w-5xl">
