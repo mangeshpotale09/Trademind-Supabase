@@ -194,6 +194,29 @@ const App: React.FC = () => {
     navigationItems.push({ id: 'admin', label: 'Admin', color: 'bg-purple-600' });
   }
 
+  const handleAddTrade = async (t: Trade) => {
+    setIsLoading(true);
+    try {
+      await saveTrade(t);
+      setTrades(prev => {
+        const index = prev.findIndex(item => item.id === t.id);
+        if (index > -1) {
+          const newTrades = [...prev];
+          newTrades[index] = t;
+          return newTrades;
+        }
+        return [t, ...prev];
+      });
+      setIsEntryFormOpen(false);
+      setEditingTrade(null);
+    } catch (e: any) { 
+      console.error("Critical Save Fault:", e);
+      alert(`Terminal Sync Failure: ${e.message || "Unknown database error"}`); 
+      throw e; 
+    }
+    finally { setIsLoading(false); }
+  };
+
   return (
     <div className="min-h-screen bg-[#070a13] text-slate-200 font-sans selection:bg-emerald-500/30">
       {isLoading && (
@@ -276,19 +299,8 @@ const App: React.FC = () => {
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-300">
           <TradeEntryForm 
             userId={currentUser.id}
-            onAdd={async (t) => {
-              setIsLoading(true);
-              try {
-                await saveTrade(t);
-                setTrades(prev => [t, ...prev]);
-                setIsEntryFormOpen(false);
-              } catch (e: any) { 
-                console.error("Save Error:", e);
-                alert(`Save failed: ${e.message || "Unknown error"}`); 
-              }
-              finally { setIsLoading(false); }
-            }}
-            onCancel={() => setIsEntryFormOpen(false)}
+            onAdd={handleAddTrade}
+            onCancel={() => { setIsEntryFormOpen(false); setEditingTrade(null); }}
             initialTrade={editingTrade || undefined}
           />
         </div>

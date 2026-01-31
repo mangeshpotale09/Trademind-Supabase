@@ -5,7 +5,7 @@ import { generateUUID, uploadAttachment } from '../services/storageService';
 
 interface TradeEntryFormProps {
   initialTrade?: Trade;
-  onAdd: (trade: Trade) => void;
+  onAdd: (trade: Trade) => Promise<void>;
   onCancel: () => void;
   userId: string;
 }
@@ -130,9 +130,7 @@ const TradeEntryForm: React.FC<TradeEntryFormProps> = ({ initialTrade, onAdd, on
 
   const isValidDate = (d: string) => d && !isNaN(new Date(d).getTime());
 
-  const handleSubmit = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    
+  const handleSubmit = async () => {
     if (isUploading) {
       alert("File upload in progress. Please wait.");
       return;
@@ -161,7 +159,7 @@ const TradeEntryForm: React.FC<TradeEntryFormProps> = ({ initialTrade, onAdd, on
     try {
       const newTrade: Trade = {
         ...(initialTrade || {}),
-        userId: initialTrade?.userId || userId,
+        userId: userId, // Pass current userId, storageService will verify it matches session
         id: initialTrade?.id || generateUUID(),
         symbol: finalSymbol,
         type,
@@ -190,8 +188,8 @@ const TradeEntryForm: React.FC<TradeEntryFormProps> = ({ initialTrade, onAdd, on
 
       await onAdd(newTrade);
     } catch (err: any) {
-      console.error("Final form error:", err);
-      alert(`Database Error: ${err.message || 'Check console for details'}`);
+      console.error("Form Submission Error:", err);
+      // Parent App.tsx handleAddTrade alert will catch and display specific DB error
     } finally {
       setIsSubmitting(false);
     }
@@ -403,7 +401,7 @@ const TradeEntryForm: React.FC<TradeEntryFormProps> = ({ initialTrade, onAdd, on
         ) : (
           <button 
             type="button" 
-            onClick={() => handleSubmit()} 
+            onClick={handleSubmit} 
             disabled={isSubmitting || isUploading}
             className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-black py-4 rounded-2xl shadow-lg flex items-center justify-center gap-3"
           >

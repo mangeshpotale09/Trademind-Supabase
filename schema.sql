@@ -1,27 +1,9 @@
 
 -- ==========================================
--- TRADE MIND DATABASE MIGRATION SCRIPT
+-- TRADE MIND DATABASE MIGRATION SCRIPT v3
 -- ==========================================
 
--- 1. PROFILES TABLE & COLUMNS
-DO $$ 
-BEGIN 
-    -- Add amount_paid if missing
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profiles' AND column_name='amount_paid') THEN
-        ALTER TABLE public.profiles ADD COLUMN amount_paid numeric DEFAULT 0;
-    END IF;
-
-    -- Add expiry_date if missing
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profiles' AND column_name='expiry_date') THEN
-        ALTER TABLE public.profiles ADD COLUMN expiry_date timestamp with time zone;
-    END IF;
-
-    -- Add mobile if missing
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profiles' AND column_name='mobile') THEN
-        ALTER TABLE public.profiles ADD COLUMN mobile text;
-    END IF;
-END $$;
-
+-- 1. PROFILES TABLE
 CREATE TABLE IF NOT EXISTS public.profiles (
   id uuid REFERENCES auth.users ON DELETE CASCADE PRIMARY KEY,
   display_id text UNIQUE,
@@ -39,57 +21,89 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   expiry_date timestamp with time zone
 );
 
--- 2. TRADES TABLE DEFINITION
+-- 2. TRADES TABLE
 CREATE TABLE IF NOT EXISTS public.trades (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid REFERENCES auth.users ON DELETE CASCADE NOT NULL,
+  user_id uuid REFERENCES auth.users ON DELETE CASCADE NOT NULL DEFAULT auth.uid(),
   symbol text NOT NULL,
   type text NOT NULL,
   side text NOT NULL,
   entry_price numeric NOT NULL,
   exit_price numeric,
   quantity numeric NOT NULL,
-  entry_date timestamp with time zone NOT NULL,
+  entry_date timestamp with time zone NOT NULL DEFAULT now(),
   exit_date timestamp with time zone,
   fees numeric DEFAULT 0,
-  status text NOT NULL,
-  tags text[] DEFAULT '{}',
+  status text NOT NULL DEFAULT 'OPEN',
+  tags jsonb DEFAULT '[]',
   notes text,
   option_details jsonb,
   ai_review jsonb,
   attachments jsonb DEFAULT '[]',
-  emotions text[] DEFAULT '{}',
-  mistakes text[] DEFAULT '{}',
-  strategies text[] DEFAULT '{}'
+  emotions jsonb DEFAULT '[]',
+  mistakes jsonb DEFAULT '[]',
+  strategies jsonb DEFAULT '[]'
 );
 
--- 3. ROW LEVEL SECURITY (RLS) SETUP
--- Nuke existing policies to prevent recursion or conflicts
-DO $$ 
-DECLARE
-    pol record;
+-- 3. AUTOMATIC PROFILE PROVISIONING
+-- This trigger ensures every auth user has a public profile record immediately
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger AS $$
 BEGIN
-    FOR pol IN (SELECT policyname, tablename FROM pg_policies WHERE schemaname = 'public' AND tablename IN ('profiles', 'trades')) LOOP
-        EXECUTE format('DROP POLICY IF EXISTS %I ON %I', pol.policyname, pol.tablename);
-    END LOOP;
-END $$;
+  INSERT INTO public.profiles (id, email, name, display_id, own_referral_code)
+  VALUES (
+    new.id, 
+    new.email, 
+    COALESCE(new.raw_user_meta_data->>'name', 'Trader'),
+    'TM-' || upper(substring(new.id::text from 1 for 6)),
+    'REF-' || upper(substring(new.id::text from 1 for 6))
+  )
+  ON CONFLICT (id) DO NOTHING;
+  RETURN new;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Enable RLS
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- 4. RLS & PERMISSIONS
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.trades ENABLE ROW LEVEL SECURITY;
 
+GRANT ALL ON public.profiles TO authenticated;
+GRANT ALL ON public.trades TO authenticated;
+
 -- Profile Policies
-CREATE POLICY "profile_owner_access" ON public.profiles FOR ALL USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
-CREATE POLICY "admin_global_profiles" ON public.profiles FOR ALL USING ((auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com');
+DROP POLICY IF EXISTS "profiles_owner" ON public.profiles;
+CREATE POLICY "profiles_owner" ON public.profiles FOR ALL USING (auth.uid() = id);
 
--- Trade Policies
-CREATE POLICY "trade_owner_access" ON public.trades FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
-CREATE POLICY "admin_global_trades" ON public.trades FOR ALL USING ((auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com');
+DROP POLICY IF EXISTS "profiles_admin" ON public.profiles;
+CREATE POLICY "profiles_admin" ON public.profiles FOR ALL USING (
+  (auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com'
+);
 
--- 4. ADMIN BOOTSTRAP
+-- Trade Policies (Explicit Breakdown for Upsert Reliability)
+DROP POLICY IF EXISTS "trades_owner_insert" ON public.trades;
+CREATE POLICY "trades_owner_insert" ON public.trades FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "trades_owner_select" ON public.trades;
+CREATE POLICY "trades_owner_select" ON public.trades FOR SELECT USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "trades_owner_update" ON public.trades;
+CREATE POLICY "trades_owner_update" ON public.trades FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "trades_owner_delete" ON public.trades;
+CREATE POLICY "trades_owner_delete" ON public.trades FOR DELETE USING (auth.uid() = user_id);
+
+-- Admin Bypass
+DROP POLICY IF EXISTS "trades_admin_all" ON public.trades;
+CREATE POLICY "trades_admin_all" ON public.trades FOR ALL USING (
+  (auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com'
+);
+
+-- 5. INITIALIZE ADMIN ROLE
 UPDATE public.profiles 
 SET role = 'ADMIN', is_paid = true, status = 'APPROVED' 
 WHERE lower(email) = 'mangeshpotale09@gmail.com';
-
--- Refresh the postgrest schema cache
-NOTIFY pgrst, 'reload schema';

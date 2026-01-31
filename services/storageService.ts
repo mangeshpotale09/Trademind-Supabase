@@ -1,3 +1,4 @@
+
 import { Trade, User, UserRole, UserStatus, Transaction, TradeStatus, TradeSide, PlanType } from "../types";
 import { supabase } from "./supabaseClient";
 
@@ -69,10 +70,15 @@ export const getCurrentUser = async (passedSession?: any): Promise<User | null> 
 
     const cachedStr = localStorage.getItem(PROFILE_CACHE_KEY);
     if (cachedStr) {
-      const cached = JSON.parse(cachedStr) as User;
-      if (cached.id === session.user.id) {
-        fetchAndCacheProfile(session.user.id, session.user.email, session.user.user_metadata);
-        return cached;
+      try {
+        const cached = JSON.parse(cachedStr) as User;
+        if (cached.id === session.user.id) {
+          // Re-validate in background
+          fetchAndCacheProfile(session.user.id, session.user.email, session.user.user_metadata);
+          return cached;
+        }
+      } catch (e) {
+        localStorage.removeItem(PROFILE_CACHE_KEY);
       }
     }
 
@@ -90,8 +96,9 @@ const fetchAndCacheProfile = async (uid: string, email: string, metadata: any): 
     .eq('id', uid)
     .maybeSingle();
 
-  if (error && error.message.includes('recursion')) {
-    throw new Error("DB_ERROR: RLS Recursion. Run schema.sql.");
+  if (error) {
+    console.error("Fetch profile error:", error);
+    return null;
   }
 
   let userObj: User;
@@ -149,6 +156,8 @@ export const validateLogin = async (email: string, password: string): Promise<Us
     password
   });
   if (error) throw error;
+  // Clear cache on login to ensure fresh data
+  localStorage.removeItem(PROFILE_CACHE_KEY);
   return getCurrentUser();
 };
 
@@ -171,20 +180,12 @@ export const submitPaymentProof = async (userId: string, plan: PlanType, file: F
   const fileExt = file.name.split('.').pop();
   const fileName = `${userId}/proof_${generateUUID()}.${fileExt}`;
   
-  // 1. Upload file to Storage
   const { error: uploadError } = await supabase.storage.from('payment-proofs').upload(fileName, file);
-  if (uploadError) {
-    if (uploadError.message.includes('bucket not found')) {
-      throw new Error("BUCKET_ERROR: Storage bucket 'payment-proofs' not found. Create it in Supabase dashboard.");
-    }
-    throw uploadError;
-  }
+  if (uploadError) throw uploadError;
 
-  // 2. Get Public URL
   const { data: { publicUrl } } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
   const amount = PLAN_PRICES[plan];
 
-  // 3. Update Database Profile
   const { error: updateError } = await supabase
     .from('profiles')
     .update({
@@ -195,12 +196,7 @@ export const submitPaymentProof = async (userId: string, plan: PlanType, file: F
     })
     .eq('id', userId);
 
-  if (updateError) {
-    if (updateError.message.includes('amount_paid')) {
-      throw new Error("SCHEMA_ERROR: Database column 'amount_paid' is missing. Action: Copy the updated schema.sql and run it in the Supabase SQL Editor.");
-    }
-    throw updateError;
-  }
+  if (updateError) throw updateError;
   localStorage.removeItem(PROFILE_CACHE_KEY);
 };
 
@@ -226,14 +222,14 @@ export const getStoredTrades = async (userId?: string): Promise<Trade[]> => {
       exitDate: t.exit_date,
       fees: Number(t.fees),
       status: t.status as TradeStatus,
-      tags: t.tags || [],
+      tags: Array.isArray(t.tags) ? t.tags : [],
       notes: t.notes || '',
       optionDetails: t.option_details,
       aiReview: t.ai_review,
       attachments: Array.isArray(t.attachments) ? t.attachments : [],
-      emotions: t.emotions || [],
-      mistakes: t.mistakes || [],
-      strategies: t.strategies || []
+      emotions: Array.isArray(t.emotions) ? t.emotions : [],
+      mistakes: Array.isArray(t.mistakes) ? t.mistakes : [],
+      strategies: Array.isArray(t.strategies) ? t.strategies : []
     }));
   } catch (err) {
     console.error("Fetch trades error:", err);
@@ -242,32 +238,49 @@ export const getStoredTrades = async (userId?: string): Promise<Trade[]> => {
 };
 
 export const saveTrade = async (trade: Trade): Promise<void> => {
+  // CRITICAL: Fetch current auth UID to prevent RLS violations from stale frontend state
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) throw new Error("Unauthorized: No active session found.");
+  
+  const authenticatedUserId = session.user.id;
+
+  // Map to DB columns with safety checks
   const payload = {
-    id: trade.id,
-    user_id: trade.userId,
+    id: trade.id || generateUUID(),
+    user_id: authenticatedUserId, // FORCE current user ID
     symbol: trade.symbol,
     type: trade.type,
     side: trade.side,
-    entry_price: trade.entryPrice,
-    exit_price: trade.exitPrice || null,
-    quantity: trade.quantity,
-    // Fix: Corrected property access to use camelCase (entryDate) as defined in Trade interface
-    entry_date: trade.entryDate,
-    // Fix: Corrected property access to use camelCase (exitDate) as defined in Trade interface
+    entry_price: Number(trade.entryPrice),
+    exit_price: trade.exitPrice !== undefined ? Number(trade.exitPrice) : null,
+    quantity: Number(trade.quantity),
+    entry_date: trade.entryDate || new Date().toISOString(),
     exit_date: trade.exitDate || null,
-    fees: trade.fees,
-    status: trade.status,
-    tags: trade.tags,
-    notes: trade.notes,
+    fees: Number(trade.fees || 0),
+    status: trade.status || 'OPEN',
+    tags: trade.tags || [],
+    notes: trade.notes || '',
     option_details: trade.optionDetails || null,
     ai_review: trade.aiReview || null,
     attachments: trade.attachments || [],
-    emotions: trade.emotions,
-    mistakes: trade.mistakes,
-    strategies: trade.strategies
+    emotions: trade.emotions || [],
+    mistakes: trade.mistakes || [],
+    strategies: trade.strategies || []
   };
-  const { error } = await supabase.from('trades').upsert(payload, { onConflict: 'id' });
-  if (error) throw error;
+
+  const { error, data } = await supabase
+    .from('trades')
+    .upsert(payload, { onConflict: 'id' })
+    .select();
+    
+  if (error) {
+    console.error("Supabase Save Error:", error);
+    throw new Error(error.message);
+  }
+  
+  if (!data || data.length === 0) {
+    throw new Error("Persistence failed: Database rejected the write operation.");
+  }
 };
 
 export const saveTrades = async (trades: Trade[]): Promise<void> => {
@@ -356,12 +369,7 @@ export const updateUserStatus = async (userId: string, status: UserStatus): Prom
     .update(updateData)
     .eq('id', userId);
     
-  if (error) {
-    if (error.message.includes('expiry_date')) {
-      throw new Error("SCHEMA_ERROR: Database column 'expiry_date' is missing. Action: Run the updated schema.sql in Supabase SQL Editor.");
-    }
-    throw error;
-  }
+  if (error) throw error;
 };
 
 export const getTransactions = async (): Promise<Transaction[]> => {
