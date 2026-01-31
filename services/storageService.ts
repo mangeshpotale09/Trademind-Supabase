@@ -1,4 +1,3 @@
-
 import { Trade, User, UserRole, UserStatus, Transaction, TradeStatus, TradeSide, PlanType } from "../types";
 import { supabase } from "./supabaseClient";
 
@@ -9,8 +8,8 @@ const PROFILE_CACHE_KEY = 'tm_cached_profile';
 // Plan pricing logic
 export const PLAN_PRICES: Record<PlanType, number> = {
   [PlanType.MONTHLY]: 299,
-  [PlanType.SIX_MONTHS]: 1499,
-  [PlanType.ANNUAL]: 2499
+  [PlanType.SIX_MONTHS]: 599,
+  [PlanType.ANNUAL]: 999
 };
 
 // Plan duration logic (in days)
@@ -252,7 +251,9 @@ export const saveTrade = async (trade: Trade): Promise<void> => {
     entry_price: trade.entryPrice,
     exit_price: trade.exitPrice || null,
     quantity: trade.quantity,
+    // Fix: Corrected property access to use camelCase (entryDate) as defined in Trade interface
     entry_date: trade.entryDate,
+    // Fix: Corrected property access to use camelCase (exitDate) as defined in Trade interface
     exit_date: trade.exitDate || null,
     fees: trade.fees,
     status: trade.status,

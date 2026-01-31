@@ -17,6 +17,7 @@ import AnalysisView from './components/AnalysisView';
 import MistakesView from './components/MistakesView';
 import EmotionsView from './components/EmotionsView';
 import AIInsightsView from './components/AIInsightsView';
+import StudioView from './components/StudioView';
 import AdminView from './components/AdminView';
 import AuthView from './components/AuthView';
 import PaymentView from './components/PaymentView';
@@ -27,7 +28,7 @@ const App: React.FC = () => {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'journal' | 'analysis' | 'mistakes' | 'emotions' | 'ai' | 'admin'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'journal' | 'analysis' | 'mistakes' | 'emotions' | 'ai' | 'studio' | 'admin'>('dashboard');
   const [isEntryFormOpen, setIsEntryFormOpen] = useState(false);
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
@@ -185,7 +186,8 @@ const App: React.FC = () => {
     { id: 'analysis', label: 'Edge', color: 'bg-violet-500' },
     { id: 'mistakes', label: 'Leak', color: 'bg-rose-500' },
     { id: 'emotions', label: 'Mind', color: 'bg-amber-500' },
-    { id: 'ai', label: 'Coach', color: 'bg-blue-500' }
+    { id: 'ai', label: 'Coach', color: 'bg-blue-500' },
+    { id: 'studio', label: 'Studio', color: 'bg-fuchsia-500' }
   ];
 
   if (currentUser.role === UserRole.ADMIN) {
@@ -264,6 +266,7 @@ const App: React.FC = () => {
           {activeTab === 'mistakes' && <MistakesView trades={trades} />}
           {activeTab === 'emotions' && <EmotionsView trades={trades} />}
           {activeTab === 'ai' && <AIInsightsView trades={trades} />}
+          {activeTab === 'studio' && <StudioView />}
           {activeTab === 'admin' && currentUser.role === UserRole.ADMIN && <AdminView />}
         </div>
       </main>
@@ -279,7 +282,10 @@ const App: React.FC = () => {
                 await saveTrade(t);
                 setTrades(prev => [t, ...prev]);
                 setIsEntryFormOpen(false);
-              } catch (e) { alert("Save failed"); }
+              } catch (e: any) { 
+                console.error("Save Error:", e);
+                alert(`Save failed: ${e.message || "Unknown error"}`); 
+              }
               finally { setIsLoading(false); }
             }}
             onCancel={() => setIsEntryFormOpen(false)}
@@ -301,7 +307,10 @@ const App: React.FC = () => {
                   await saveTrade(t);
                   setTrades(prev => prev.map(old => old.id === t.id ? t : old));
                   setSelectedTrade(t);
-                } catch (e) { alert("Update failed"); }
+                } catch (e: any) { 
+                  console.error("Update Error:", e);
+                  alert(`Update failed: ${e.message || "Unknown error"}`); 
+                }
                 finally { setIsLoading(false); }
               }}
               onDelete={async (id) => {
@@ -310,7 +319,10 @@ const App: React.FC = () => {
                   await deleteTradeFromDB(id);
                   setTrades(prev => prev.filter(t => t.id !== id));
                   setSelectedTrade(null);
-                } catch (e) { alert("Delete failed"); }
+                } catch (e: any) { 
+                  console.error("Delete Error:", e);
+                  alert(`Delete failed: ${e.message || "Unknown error"}`); 
+                }
                 finally { setIsLoading(false); }
               }}
               onEdit={(t) => { setEditingTrade(t); setIsEntryFormOpen(true); }}

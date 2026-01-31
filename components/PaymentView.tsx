@@ -19,8 +19,8 @@ const PaymentView: React.FC<PaymentViewProps> = ({ user, onPaymentSubmitted }) =
 
   const plans = [
     { type: PlanType.MONTHLY, price: 299, label: 'Monthly Pass', desc: 'Full AI access for 30 days' },
-    { type: PlanType.SIX_MONTHS, price: 1499, label: 'Pro (6 Months)', desc: 'Advanced analytics & deep logs' },
-    { type: PlanType.ANNUAL, price: 2499, label: 'Elite (Annual)', desc: 'Unlimited AI coaching & archives' },
+    { type: PlanType.SIX_MONTHS, price: 599, label: 'Pro (6 Months)', desc: 'Advanced analytics & deep logs' },
+    { type: PlanType.ANNUAL, price: 999, label: 'Elite (Annual)', desc: 'Unlimited AI coaching & archives' },
   ];
 
   const currentPrice = plans.find(p => p.type === selectedPlan)?.price || 0;

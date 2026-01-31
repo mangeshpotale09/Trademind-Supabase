@@ -3,9 +3,7 @@
 -- TRADE MIND DATABASE MIGRATION SCRIPT
 -- ==========================================
 
--- 1. ENSURE COLUMNS EXIST (Fix for "missing column" error)
--- This section ensures that even if the table already exists, the new columns are added.
-
+-- 1. PROFILES TABLE & COLUMNS
 DO $$ 
 BEGIN 
     -- Add amount_paid if missing
@@ -18,13 +16,12 @@ BEGIN
         ALTER TABLE public.profiles ADD COLUMN expiry_date timestamp with time zone;
     END IF;
 
-    -- Add mobile if missing (just in case)
+    -- Add mobile if missing
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='profiles' AND column_name='mobile') THEN
         ALTER TABLE public.profiles ADD COLUMN mobile text;
     END IF;
 END $$;
 
--- 2. RE-INITIALIZE CORE STRUCTURE
 CREATE TABLE IF NOT EXISTS public.profiles (
   id uuid REFERENCES auth.users ON DELETE CASCADE PRIMARY KEY,
   display_id text UNIQUE,
@@ -42,27 +39,54 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   expiry_date timestamp with time zone
 );
 
--- 3. STORAGE BUCKETS SETUP
--- Run these in your Supabase Dashboard under Storage -> New Bucket
--- 1. 'payment-proofs' (Public)
--- 2. 'trade-attachments' (Public)
+-- 2. TRADES TABLE DEFINITION
+CREATE TABLE IF NOT EXISTS public.trades (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid REFERENCES auth.users ON DELETE CASCADE NOT NULL,
+  symbol text NOT NULL,
+  type text NOT NULL,
+  side text NOT NULL,
+  entry_price numeric NOT NULL,
+  exit_price numeric,
+  quantity numeric NOT NULL,
+  entry_date timestamp with time zone NOT NULL,
+  exit_date timestamp with time zone,
+  fees numeric DEFAULT 0,
+  status text NOT NULL,
+  tags text[] DEFAULT '{}',
+  notes text,
+  option_details jsonb,
+  ai_review jsonb,
+  attachments jsonb DEFAULT '[]',
+  emotions text[] DEFAULT '{}',
+  mistakes text[] DEFAULT '{}',
+  strategies text[] DEFAULT '{}'
+);
 
--- 4. NUKE AND RE-APPLY POLICIES (Fixes RLS Recursion)
+-- 3. ROW LEVEL SECURITY (RLS) SETUP
+-- Nuke existing policies to prevent recursion or conflicts
 DO $$ 
 DECLARE
     pol record;
 BEGIN
-    FOR pol IN (SELECT policyname, tablename FROM pg_policies WHERE schemaname = 'public' AND tablename IN ('profiles', 'trades', 'transactions')) LOOP
+    FOR pol IN (SELECT policyname, tablename FROM pg_policies WHERE schemaname = 'public' AND tablename IN ('profiles', 'trades')) LOOP
         EXECUTE format('DROP POLICY IF EXISTS %I ON %I', pol.policyname, pol.tablename);
     END LOOP;
 END $$;
 
+-- Enable RLS
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.trades ENABLE ROW LEVEL SECURITY;
 
+-- Profile Policies
 CREATE POLICY "profile_owner_access" ON public.profiles FOR ALL USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
-CREATE POLICY "admin_global_access" ON public.profiles FOR ALL USING ((auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com');
+CREATE POLICY "admin_global_profiles" ON public.profiles FOR ALL USING ((auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com');
 
--- 5. ADMIN BOOTSTRAP
+-- Trade Policies
+CREATE POLICY "trade_owner_access" ON public.trades FOR ALL USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "admin_global_trades" ON public.trades FOR ALL USING ((auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com');
+
+-- 4. ADMIN BOOTSTRAP
 UPDATE public.profiles 
 SET role = 'ADMIN', is_paid = true, status = 'APPROVED' 
 WHERE lower(email) = 'mangeshpotale09@gmail.com';
