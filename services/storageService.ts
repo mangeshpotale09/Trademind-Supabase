@@ -111,7 +111,7 @@ const fetchAndCacheProfile = async (uid: string, email: string, metadata: any): 
         joinedAt: profileData.joined_at,
         ownReferralCode: profileData.own_referral_code,
         paymentScreenshot: profileData.payment_screenshot,
-        selectedPlan: profileData.selected_plan as PlanType,
+        selected_plan: profileData.selected_plan as PlanType,
         amountPaid: profileData.amount_paid,
         expiryDate: profileData.expiry_date
       };
@@ -241,6 +241,7 @@ export const saveTrade = async (trade: Trade): Promise<void> => {
     exit_price: trade.exitPrice || null,
     quantity: trade.quantity,
     entry_date: trade.entryDate,
+    // Fix: Changed trade.exit_date to trade.exitDate as defined in the Trade interface
     exit_date: trade.exitDate || null,
     fees: trade.fees,
     status: trade.status,
@@ -329,11 +330,46 @@ export const getAdminOverviewStats = async () => {
 };
 
 export const updateUserStatus = async (userId: string, status: UserStatus): Promise<void> => {
+  let updatePayload: any = { status, is_paid: status === UserStatus.APPROVED };
+
+  if (status === UserStatus.APPROVED) {
+    // Fetch user's requested plan to calculate expiry and amount
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('selected_plan')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (profile?.selected_plan) {
+      const now = new Date();
+      let daysToAdd = 30;
+      let price = 299;
+
+      if (profile.selected_plan === PlanType.SIX_MONTHS) {
+        daysToAdd = 180;
+        price = 599;
+      } else if (profile.selected_plan === PlanType.ANNUAL) {
+        daysToAdd = 365;
+        price = 999;
+      }
+
+      const expiryDate = new Date(now.getTime() + daysToAdd * 24 * 60 * 60 * 1000);
+      updatePayload.expiry_date = expiryDate.toISOString();
+      updatePayload.amount_paid = price;
+    }
+  } else if (status === UserStatus.PENDING || status === UserStatus.REJECTED) {
+    updatePayload.is_paid = false;
+    updatePayload.expiry_date = null;
+    updatePayload.amount_paid = 0;
+  }
+
   const { error } = await supabase
     .from('profiles')
-    .update({ status, is_paid: status === UserStatus.APPROVED })
+    .update(updatePayload)
     .eq('id', userId);
+  
   if (error) throw error;
+  localStorage.removeItem(PROFILE_CACHE_KEY);
 };
 
 export const getTransactions = async (): Promise<Transaction[]> => {

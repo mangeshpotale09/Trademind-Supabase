@@ -70,6 +70,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const load = async () => {
+      // PERMANENT ACCESS GUARD: Only load trades if user is APPROVED or ADMIN
       if (currentUser?.id && (currentUser.status === UserStatus.APPROVED || currentUser.role === UserRole.ADMIN)) {
         setIsLoading(true);
         try {
@@ -95,7 +96,7 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen bg-[#070a13] flex flex-col items-center justify-center p-6">
         <div className="w-12 h-12 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
-        <p className="mt-4 text-[10px] font-black text-slate-500 uppercase tracking-[0.3em]">Syncing Terminal...</p>
+        <p className="mt-4 text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] animate-pulse">Synchronizing Terminal...</p>
       </div>
     );
   }
@@ -104,6 +105,7 @@ const App: React.FC = () => {
     return <AuthView onAuthComplete={setCurrentUser} />;
   }
 
+  // WEBPAGE ACCESS GUARD: User must have status APPROVED to enter main dashboard
   if (currentUser.role === UserRole.USER && currentUser.status === UserStatus.PENDING) {
     return (
       <PaymentView 
@@ -154,12 +156,13 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* Main Navigation Bar */}
       <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-[#0e1421]/90 backdrop-blur-xl border border-[#1e293b] p-1.5 rounded-3xl shadow-2xl flex items-center gap-1.5 max-w-[96vw] overflow-x-auto no-scrollbar">
         {navigationItems.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as any)}
-            className={`flex items-center justify-center px-5 py-3 rounded-2xl transition-all relative whitespace-nowrap ${
+            className={`flex items-center justify-center px-6 py-3 rounded-2xl transition-all relative whitespace-nowrap ${
               activeTab === tab.id 
                 ? `${tab.color} text-slate-900 shadow-lg font-black scale-105` 
                 : 'text-slate-500 hover:text-slate-200 hover:bg-white/5'
@@ -177,7 +180,7 @@ const App: React.FC = () => {
                <span className="bg-emerald-500/10 text-emerald-400 text-[9px] font-black px-2 py-0.5 rounded border border-emerald-500/20 uppercase tracking-[0.2em]">{currentUser.displayId}</span>
                <div className="flex items-center gap-2">
                   <div className={`w-1.5 h-1.5 rounded-full ${isLoading ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'}`}></div>
-                  <span className="text-[8px] font-black uppercase tracking-widest text-slate-500">Node Active</span>
+                  <span className="text-[8px] font-black uppercase tracking-widest text-slate-500">Access: Verified</span>
                </div>
             </div>
             <h1 className="text-4xl font-black text-white tracking-tighter">
@@ -186,8 +189,14 @@ const App: React.FC = () => {
           </div>
           
           <div className="flex items-center gap-3">
-            <button onClick={handleLogout} className="px-5 py-3 rounded-xl bg-white/5 text-slate-500 hover:text-red-400 transition-all text-[9px] font-black uppercase tracking-widest border border-white/5">Exit</button>
-            <button onClick={() => { setEditingTrade(null); setIsEntryFormOpen(true); }} className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-black px-8 py-3 rounded-xl transition-all shadow-xl shadow-emerald-500/10 text-[10px] uppercase tracking-widest">Execute Trade</button>
+            <button onClick={handleLogout} className="px-5 py-3 rounded-xl bg-white/5 text-slate-500 hover:text-red-400 transition-all text-[9px] font-black uppercase tracking-widest border border-white/5">Exit Node</button>
+            <button 
+              onClick={() => { setEditingTrade(null); setIsEntryFormOpen(true); }} 
+              className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-black px-8 py-3 rounded-xl transition-all shadow-xl shadow-emerald-500/10 text-[10px] uppercase tracking-widest flex items-center gap-3"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 4v16m8-8H4"></path></svg>
+              Execute Trade
+            </button>
           </div>
         </header>
 
@@ -217,7 +226,7 @@ const App: React.FC = () => {
                 }
                 setIsEntryFormOpen(false);
               } catch (e: any) { 
-                alert(`CRITICAL SYNC FAILURE: ${e.message || "Unknown Database Error"}`); 
+                alert(`CRITICAL SYNC FAILURE: ${e.message}`); 
               } finally { 
                 setIsLoading(false); 
               }

@@ -72,7 +72,7 @@ export const getWeeklyInsights = async (trades: Trade[]): Promise<string | null>
   }
 };
 
-// Fix: Updated model to gemini-3-pro-image-preview for googleSearch support and added grounding source extraction
+// Fix: Updated model to gemini-3-pro-preview for text-based analysis with search grounding
 export const queryTradeHistory = async (query: string, trades: Trade[]): Promise<string | null> => {
   if (!process.env.API_KEY) return null;
   
@@ -80,7 +80,7 @@ export const queryTradeHistory = async (query: string, trades: Trade[]): Promise
   
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-image-preview',
+      model: 'gemini-3-pro-preview',
       contents: `User Query: ${query}
       
       Based on the following trade data:
