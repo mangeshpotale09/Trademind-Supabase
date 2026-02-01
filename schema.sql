@@ -1,109 +1,92 @@
 
 -- ==========================================
--- TRADE MIND DATABASE MIGRATION SCRIPT v3
+-- TERMINAL DATABASE RECOVERY & RLS FIX
 -- ==========================================
 
--- 1. PROFILES TABLE
-CREATE TABLE IF NOT EXISTS public.profiles (
-  id uuid REFERENCES auth.users ON DELETE CASCADE PRIMARY KEY,
-  display_id text UNIQUE,
-  email text UNIQUE,
+-- 1. CLEANUP: DROP ALL EXISTING POLICIES TO AVOID CONFLICTS
+do $$ 
+declare
+    pol record;
+begin
+    for pol in (select policyname, tablename from pg_policies where schemaname = 'public' and tablename in ('profiles', 'trades', 'transactions')) loop
+        execute format('drop policy if exists %I on %I', pol.policyname, pol.tablename);
+    end loop;
+end $$;
+
+-- 2. TABLES RE-VERIFICATION
+create table if not exists public.profiles (
+  id uuid references auth.users on delete cascade primary key,
+  display_id text unique,
+  email text unique,
   name text,
   mobile text,
-  is_paid boolean DEFAULT false,
-  role text DEFAULT 'USER',
-  status text DEFAULT 'PENDING',
-  joined_at timestamp with time zone DEFAULT timezone('utc'::text, now()),
-  own_referral_code text UNIQUE,
+  is_paid boolean default false,
+  role text default 'USER',
+  status text default 'PENDING',
+  joined_at timestamp with time zone default timezone('utc'::text, now()),
+  own_referral_code text unique,
   payment_screenshot text,
-  selected_plan text,
-  amount_paid numeric DEFAULT 0,
-  expiry_date timestamp with time zone
+  selected_plan text
 );
 
--- 2. TRADES TABLE
-CREATE TABLE IF NOT EXISTS public.trades (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid REFERENCES auth.users ON DELETE CASCADE NOT NULL DEFAULT auth.uid(),
-  symbol text NOT NULL,
-  type text NOT NULL,
-  side text NOT NULL,
-  entry_price numeric NOT NULL,
+create table if not exists public.trades (
+  id uuid primary key,
+  user_id uuid references auth.users on delete cascade not null,
+  symbol text not null,
+  type text not null,
+  side text not null,
+  entry_price numeric not null,
   exit_price numeric,
-  quantity numeric NOT NULL,
-  entry_date timestamp with time zone NOT NULL DEFAULT now(),
+  quantity numeric not null,
+  entry_date timestamp with time zone not null,
   exit_date timestamp with time zone,
-  fees numeric DEFAULT 0,
-  status text NOT NULL DEFAULT 'OPEN',
-  tags jsonb DEFAULT '[]',
+  fees numeric default 0,
+  status text not null,
+  tags text[] default '{}',
   notes text,
   option_details jsonb,
   ai_review jsonb,
-  attachments jsonb DEFAULT '[]',
-  emotions jsonb DEFAULT '[]',
-  mistakes jsonb DEFAULT '[]',
-  strategies jsonb DEFAULT '[]'
+  attachments jsonb default '[]',
+  emotions text[] default '{}',
+  mistakes text[] default '{}',
+  strategies text[] default '{}',
+  created_at timestamp with time zone default timezone('utc'::text, now())
 );
 
--- 3. AUTOMATIC PROFILE PROVISIONING
--- This trigger ensures every auth user has a public profile record immediately
-CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS trigger AS $$
-BEGIN
-  INSERT INTO public.profiles (id, email, name, display_id, own_referral_code)
-  VALUES (
-    new.id, 
-    new.email, 
-    COALESCE(new.raw_user_meta_data->>'name', 'Trader'),
-    'TM-' || upper(substring(new.id::text from 1 for 6)),
-    'REF-' || upper(substring(new.id::text from 1 for 6))
-  )
-  ON CONFLICT (id) DO NOTHING;
-  RETURN new;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+-- 3. ENABLE RLS
+alter table public.profiles enable row level security;
+alter table public.trades enable row level security;
 
-DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
-CREATE TRIGGER on_auth_user_created
-  AFTER INSERT ON auth.users
-  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+-- 4. PROFILES POLICIES
+create policy "profiles_owner_policy" on public.profiles
+for all 
+using (auth.uid() = id)
+with check (auth.uid() = id);
 
--- 4. RLS & PERMISSIONS
-ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.trades ENABLE ROW LEVEL SECURITY;
+create policy "profiles_admin_policy" on public.profiles
+for all 
+using ((auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com')
+with check ((auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com');
 
-GRANT ALL ON public.profiles TO authenticated;
-GRANT ALL ON public.trades TO authenticated;
+-- 5. TRADES POLICIES (Combined FOR ALL to ensure UPSERT works correctly)
+create policy "trades_owner_policy" on public.trades
+for all 
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
 
--- Profile Policies
-DROP POLICY IF EXISTS "profiles_owner" ON public.profiles;
-CREATE POLICY "profiles_owner" ON public.profiles FOR ALL USING (auth.uid() = id);
+create policy "trades_admin_policy" on public.trades
+for all 
+using ((auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com')
+with check ((auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com');
 
-DROP POLICY IF EXISTS "profiles_admin" ON public.profiles;
-CREATE POLICY "profiles_admin" ON public.profiles FOR ALL USING (
-  (auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com'
-);
+-- 6. SETUP STORAGE BUCKETS (Note: Manual step in Supabase Dashboard)
+-- trade-attachments
+-- payment-proofs
 
--- Trade Policies (Explicit Breakdown for Upsert Reliability)
-DROP POLICY IF EXISTS "trades_owner_insert" ON public.trades;
-CREATE POLICY "trades_owner_insert" ON public.trades FOR INSERT WITH CHECK (auth.uid() = user_id);
+-- 7. INITIALIZE ADMIN
+update public.profiles 
+set role = 'ADMIN', is_paid = true, status = 'APPROVED' 
+where lower(email) = 'mangeshpotale09@gmail.com';
 
-DROP POLICY IF EXISTS "trades_owner_select" ON public.trades;
-CREATE POLICY "trades_owner_select" ON public.trades FOR SELECT USING (auth.uid() = user_id);
-
-DROP POLICY IF EXISTS "trades_owner_update" ON public.trades;
-CREATE POLICY "trades_owner_update" ON public.trades FOR UPDATE USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
-
-DROP POLICY IF EXISTS "trades_owner_delete" ON public.trades;
-CREATE POLICY "trades_owner_delete" ON public.trades FOR DELETE USING (auth.uid() = user_id);
-
--- Admin Bypass
-DROP POLICY IF EXISTS "trades_admin_all" ON public.trades;
-CREATE POLICY "trades_admin_all" ON public.trades FOR ALL USING (
-  (auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com'
-);
-
--- 5. INITIALIZE ADMIN ROLE
-UPDATE public.profiles 
-SET role = 'ADMIN', is_paid = true, status = 'APPROVED' 
-WHERE lower(email) = 'mangeshpotale09@gmail.com';
+-- 8. REFRESH SCHEMA CACHE
+notify pgrst, 'reload schema';

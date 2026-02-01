@@ -63,11 +63,6 @@ const AdminView: React.FC = () => {
     }
   };
 
-  const formatDate = (dateStr?: string) => {
-    if (!dateStr) return '--';
-    return new Date(dateStr).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' });
-  };
-
   const tabs = [
     { id: 'overview', label: 'Command', icon: 'M13 10V3L4 14h7v7l9-11h-7z' },
     { id: 'users', label: 'Registry', icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z' },
@@ -117,6 +112,19 @@ const AdminView: React.FC = () => {
               <AdminStatCard label="System Tape Volume" value={overviewStats.totalTrades} icon="📼" color="text-amber-400" />
               <AdminStatCard label="Transactions Recorded" value={overviewStats.totalTransactions} icon="💰" color="text-emerald-400" />
               <AdminStatCard label="Approval Queue" value={overviewStats.pendingApprovals} icon="⚖️" color="text-orange-400" />
+              
+              {overviewStats.pendingApprovals > 0 && (
+                <div className="col-span-full bg-orange-500/10 border border-orange-500/20 p-8 rounded-3xl flex items-center justify-between animate-pulse">
+                  <div className="flex items-center gap-6">
+                    <span className="text-4xl">⚠️</span>
+                    <div>
+                      <h4 className="text-white font-black text-lg">Identity Verifications Pending</h4>
+                      <p className="text-orange-400 text-[10px] font-black uppercase tracking-widest">{overviewStats.pendingApprovals} Subject(s) waiting for manual proof audit.</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setActiveSubTab('users')} className="bg-orange-500 hover:bg-orange-400 text-slate-900 px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg">Open Registry</button>
+                </div>
+              )}
             </div>
           )}
 
@@ -136,91 +144,64 @@ const AdminView: React.FC = () => {
               </div>
 
               <div className="bg-[#0e1421] border border-[#1e293b] rounded-[2.5rem] overflow-hidden shadow-2xl">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left">
-                    <thead>
-                      <tr className="bg-[#0a0f1d] text-slate-500 text-[9px] font-black uppercase tracking-[0.2em] border-b border-[#1e293b]">
-                        <th className="px-8 py-6">Identity</th>
-                        <th className="px-8 py-6">Plan Info</th>
-                        <th className="px-8 py-6">Amount Paid</th>
-                        <th className="px-8 py-6">Validity (Start - End)</th>
-                        <th className="px-8 py-6">Proof</th>
-                        <th className="px-8 py-6">Status</th>
-                        <th className="px-8 py-6 text-right">Actions</th>
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="bg-[#0a0f1d] text-slate-500 text-[9px] font-black uppercase tracking-[0.2em] border-b border-[#1e293b]">
+                      <th className="px-8 py-6">ID</th>
+                      <th className="px-8 py-6">Identity</th>
+                      <th className="px-8 py-6">Plan Requested</th>
+                      <th className="px-8 py-6">Status</th>
+                      <th className="px-8 py-6 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#1e293b]">
+                    {filteredUsers.length === 0 ? (
+                      <tr><td colSpan={5} className="px-8 py-12 text-center text-slate-600 font-black uppercase text-[10px] tracking-widest">No matching subjects found</td></tr>
+                    ) : filteredUsers.map(user => (
+                      <tr key={user.id} className="hover:bg-[#111827] transition-all group">
+                        <td className="px-8 py-6 font-mono text-[10px] text-purple-400">{user.displayId}</td>
+                        <td className="px-8 py-6">
+                          <div className="font-bold text-white text-sm">{user.name}</div>
+                          <div className="text-[10px] text-slate-500">{user.email}</div>
+                        </td>
+                        <td className="px-8 py-6">
+                          <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">{user.selectedPlan || 'NONE'}</span>
+                        </td>
+                        <td className="px-8 py-6">
+                          <div className={`flex items-center gap-2 text-[9px] font-black uppercase tracking-widest ${
+                            user.status === UserStatus.APPROVED ? 'text-emerald-500' : 
+                            user.status === UserStatus.WAITING_APPROVAL ? 'text-orange-500' : 'text-slate-500'
+                          }`}>
+                            <div className={`w-1.5 h-1.5 rounded-full ${
+                              user.status === UserStatus.APPROVED ? 'bg-emerald-500' : 
+                              user.status === UserStatus.WAITING_APPROVAL ? 'bg-orange-500 animate-pulse' : 'bg-slate-700'
+                            }`}></div>
+                            {user.status}
+                          </div>
+                        </td>
+                        <td className="px-8 py-6 text-right">
+                          {user.status === UserStatus.WAITING_APPROVAL ? (
+                            <button 
+                              onClick={() => setSelectedProof(user)}
+                              className="bg-orange-500 text-slate-900 px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest hover:scale-105 transition-transform"
+                            >
+                              Review Proof
+                            </button>
+                          ) : (
+                            <div className="flex justify-end gap-2">
+                              {user.status !== UserStatus.APPROVED && (
+                                <button onClick={() => handleStatusChange(user.id, UserStatus.APPROVED)} className="px-4 py-2 bg-emerald-500 text-slate-900 rounded-xl text-[8px] font-black uppercase tracking-widest">Approve</button>
+                              )}
+                              {user.status === UserStatus.APPROVED && (
+                                <button onClick={() => handleStatusChange(user.id, UserStatus.PENDING)} className="px-4 py-2 bg-red-500/10 text-red-500 rounded-xl text-[8px] font-black uppercase tracking-widest">Revoke</button>
+                              )}
+                            </div>
+                          )}
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#1e293b]">
-                      {filteredUsers.length === 0 ? (
-                        <tr><td colSpan={7} className="px-8 py-12 text-center text-slate-600 font-black uppercase text-[10px] tracking-widest">No matching subjects found</td></tr>
-                      ) : filteredUsers.map(user => (
-                        <tr key={user.id} className="hover:bg-[#111827] transition-all group">
-                          <td className="px-8 py-6">
-                            <div className="font-bold text-white text-sm">{user.name}</div>
-                            <div className="text-[9px] text-purple-400 font-mono uppercase tracking-widest">{user.displayId}</div>
-                            <div className="text-[10px] text-slate-500">{user.email}</div>
-                          </td>
-                          <td className="px-8 py-6">
-                            <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">{user.selectedPlan || 'NONE'}</span>
-                          </td>
-                          <td className="px-8 py-6">
-                            <div className="text-sm font-black text-emerald-400 font-mono">
-                              ₹{user.amountPaid?.toLocaleString() || '--'}
-                            </div>
-                          </td>
-                          <td className="px-8 py-6">
-                            <div className="flex flex-col gap-1">
-                              <span className="text-[10px] text-slate-400 font-mono">S: {formatDate(user.joinedAt)}</span>
-                              <span className="text-[10px] text-slate-500 font-mono">E: {formatDate(user.expiryDate)}</span>
-                            </div>
-                          </td>
-                          <td className="px-8 py-6">
-                            {user.paymentScreenshot ? (
-                              <button 
-                                onClick={() => setSelectedProof(user)}
-                                className="w-12 h-12 rounded-lg border border-[#1e293b] overflow-hidden hover:border-purple-500 transition-colors bg-[#0a0f1d]"
-                              >
-                                <img src={user.paymentScreenshot} alt="Proof" className="w-full h-full object-cover" />
-                              </button>
-                            ) : (
-                              <span className="text-[9px] text-slate-700 font-black uppercase">No Proof</span>
-                            )}
-                          </td>
-                          <td className="px-8 py-6">
-                            <div className={`flex items-center gap-2 text-[9px] font-black uppercase tracking-widest ${
-                              user.status === UserStatus.APPROVED ? 'text-emerald-500' : 
-                              user.status === UserStatus.WAITING_APPROVAL ? 'text-orange-500' : 'text-slate-500'
-                            }`}>
-                              <div className={`w-1.5 h-1.5 rounded-full ${
-                                user.status === UserStatus.APPROVED ? 'bg-emerald-500' : 
-                                user.status === UserStatus.WAITING_APPROVAL ? 'bg-orange-500 animate-pulse' : 'bg-slate-700'
-                              }`}></div>
-                              {user.status}
-                            </div>
-                          </td>
-                          <td className="px-8 py-6 text-right">
-                            {user.status === UserStatus.WAITING_APPROVAL ? (
-                              <button 
-                                onClick={() => setSelectedProof(user)}
-                                className="bg-orange-500 text-slate-900 px-5 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest hover:scale-105 transition-transform"
-                              >
-                                Audit Proof
-                              </button>
-                            ) : (
-                              <div className="flex justify-end gap-2">
-                                {user.status !== UserStatus.APPROVED && (
-                                  <button onClick={() => handleStatusChange(user.id, UserStatus.APPROVED)} className="px-4 py-2 bg-emerald-500 text-slate-900 rounded-xl text-[8px] font-black uppercase tracking-widest">Approve</button>
-                                )}
-                                {user.status === UserStatus.APPROVED && (
-                                  <button onClick={() => handleStatusChange(user.id, UserStatus.PENDING)} className="px-4 py-2 bg-red-500/10 text-red-500 rounded-xl text-[8px] font-black uppercase tracking-widest">Revoke</button>
-                                )}
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
@@ -231,34 +212,36 @@ const AdminView: React.FC = () => {
                  <div className="p-8 border-b border-[#1e293b] bg-[#0a0f1d]/50">
                    <h3 className="text-white font-black text-sm uppercase tracking-widest">Recent Global Executions</h3>
                  </div>
-                 <div className="overflow-x-auto">
-                   <table className="w-full text-left">
-                    <thead>
-                      <tr className="bg-[#0a0f1d] text-slate-500 text-[9px] font-black uppercase tracking-widest border-b border-[#1e293b]">
-                        <th className="px-8 py-4">Symbol</th>
-                        <th className="px-8 py-4">Trader ID</th>
-                        <th className="px-8 py-4">Side</th>
-                        <th className="px-8 py-4">Entry</th>
-                        <th className="px-8 py-4 text-right">Status</th>
+                 <table className="w-full text-left">
+                  <thead>
+                    <tr className="bg-[#0a0f1d] text-slate-500 text-[9px] font-black uppercase tracking-widest border-b border-[#1e293b]">
+                      <th className="px-8 py-4">Symbol</th>
+                      <th className="px-8 py-4">Trader ID</th>
+                      <th className="px-8 py-4">Side</th>
+                      <th className="px-8 py-4">Entry</th>
+                      <th className="px-8 py-4">Exit</th>
+                      <th className="px-8 py-4 text-right">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#1e293b]">
+                    {allTrades.length === 0 ? (
+                      <tr><td colSpan={6} className="px-8 py-12 text-center text-slate-600 font-black uppercase text-[10px] tracking-widest">System tape is currently empty</td></tr>
+                    ) : allTrades.map(trade => (
+                      <tr key={trade.id} className="hover:bg-[#111827] transition-all">
+                        <td className="px-8 py-4 font-black text-white text-sm">{trade.symbol}</td>
+                        <td className="px-8 py-4 font-mono text-[9px] text-purple-400">{trade.userId.substring(0, 8)}</td>
+                        <td className="px-8 py-4 text-[10px] font-black uppercase tracking-widest">{trade.side}</td>
+                        <td className="px-8 py-4 text-[10px] font-mono text-slate-400">₹{trade.entryPrice.toLocaleString()}</td>
+                        <td className="px-8 py-4 text-[10px] font-mono text-slate-400">{trade.exitPrice ? `₹${trade.exitPrice.toLocaleString()}` : '--'}</td>
+                        <td className="px-8 py-4 text-right">
+                           <span className={`text-[8px] font-black px-2 py-0.5 rounded ${trade.status === 'CLOSED' ? 'bg-slate-800 text-slate-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                             {trade.status}
+                           </span>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#1e293b]">
-                      {allTrades.map(trade => (
-                        <tr key={trade.id} className="hover:bg-[#111827] transition-all">
-                          <td className="px-8 py-4 font-black text-white text-sm">{trade.symbol}</td>
-                          <td className="px-8 py-4 font-mono text-[9px] text-purple-400">{trade.userId.substring(0, 8)}</td>
-                          <td className="px-8 py-4 text-[10px] font-black uppercase tracking-widest">{trade.side}</td>
-                          <td className="px-8 py-4 text-[10px] font-mono text-slate-400">₹{trade.entryPrice.toLocaleString()}</td>
-                          <td className="px-8 py-4 text-right">
-                             <span className={`text-[8px] font-black px-2 py-0.5 rounded ${trade.status === 'CLOSED' ? 'bg-slate-800 text-slate-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
-                               {trade.status}
-                             </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                   </table>
-                 </div>
+                    ))}
+                  </tbody>
+                 </table>
               </div>
             </div>
           )}
@@ -269,32 +252,34 @@ const AdminView: React.FC = () => {
                  <div className="p-8 border-b border-[#1e293b] bg-[#0a0f1d]/50">
                    <h3 className="text-white font-black text-sm uppercase tracking-widest">Financial Ledger</h3>
                  </div>
-                 <div className="overflow-x-auto">
-                   <table className="w-full text-left">
-                    <thead>
-                      <tr className="bg-[#0a0f1d] text-slate-500 text-[9px] font-black uppercase tracking-widest border-b border-[#1e293b]">
-                        <th className="px-8 py-4">Timestamp</th>
-                        <th className="px-8 py-4">User</th>
-                        <th className="px-8 py-4">Amount</th>
-                        <th className="px-8 py-4 text-right">Status</th>
+                 <table className="w-full text-left">
+                  <thead>
+                    <tr className="bg-[#0a0f1d] text-slate-500 text-[9px] font-black uppercase tracking-widest border-b border-[#1e293b]">
+                      <th className="px-8 py-4">Timestamp</th>
+                      <th className="px-8 py-4">User</th>
+                      <th className="px-8 py-4">Plan</th>
+                      <th className="px-8 py-4">Amount</th>
+                      <th className="px-8 py-4 text-right">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#1e293b]">
+                    {transactions.length === 0 ? (
+                      <tr><td colSpan={5} className="px-8 py-12 text-center text-slate-600 font-black uppercase text-[10px] tracking-widest">No settlement history found</td></tr>
+                    ) : transactions.map(tx => (
+                      <tr key={tx.id} className="hover:bg-[#111827] transition-all">
+                        <td className="px-8 py-4 text-[10px] text-slate-500">{new Date(tx.timestamp).toLocaleString()}</td>
+                        <td className="px-8 py-4 font-bold text-white text-xs">{tx.userName}</td>
+                        <td className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">{tx.plan}</td>
+                        <td className="px-8 py-4 text-[11px] font-black text-emerald-400">₹{tx.amount.toLocaleString()}</td>
+                        <td className="px-8 py-4 text-right">
+                           <span className={`text-[9px] font-black px-2 py-0.5 rounded ${tx.status === 'SUCCESS' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
+                             {tx.status}
+                           </span>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#1e293b]">
-                      {transactions.map(tx => (
-                        <tr key={tx.id} className="hover:bg-[#111827] transition-all">
-                          <td className="px-8 py-4 text-[10px] text-slate-500">{new Date(tx.timestamp).toLocaleString()}</td>
-                          <td className="px-8 py-4 font-bold text-white text-xs">{tx.userName}</td>
-                          <td className="px-8 py-4 text-[11px] font-black text-emerald-400">₹{tx.amount.toLocaleString()}</td>
-                          <td className="px-8 py-4 text-right">
-                             <span className={`text-[9px] font-black px-2 py-0.5 rounded ${tx.status === 'SUCCESS' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
-                               {tx.status}
-                             </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                   </table>
-                 </div>
+                    ))}
+                  </tbody>
+                 </table>
               </div>
             </div>
           )}
@@ -321,17 +306,6 @@ const AdminView: React.FC = () => {
                  ) : (
                    <div className="h-full flex items-center justify-center text-slate-700 font-black uppercase text-[10px]">No attachment found</div>
                  )}
-               </div>
-
-               <div className="grid grid-cols-2 gap-4">
-                 <div className="p-4 bg-[#0a0f1d] rounded-2xl border border-[#1e293b]">
-                   <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest block mb-1">Plan Requested</span>
-                   <span className="text-sm font-black text-white uppercase">{selectedProof.selectedPlan || '--'}</span>
-                 </div>
-                 <div className="p-4 bg-[#0a0f1d] rounded-2xl border border-[#1e293b]">
-                   <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest block mb-1">Registration Date</span>
-                   <span className="text-sm font-black text-white uppercase">{formatDate(selectedProof.joinedAt)}</span>
-                 </div>
                </div>
 
                <div className="flex gap-4">

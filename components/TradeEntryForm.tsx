@@ -5,7 +5,7 @@ import { generateUUID, uploadAttachment } from '../services/storageService';
 
 interface TradeEntryFormProps {
   initialTrade?: Trade;
-  onAdd: (trade: Trade) => Promise<void>;
+  onAdd: (trade: Trade) => void;
   onCancel: () => void;
   userId: string;
 }
@@ -112,9 +112,10 @@ const TradeEntryForm: React.FC<TradeEntryFormProps> = ({ initialTrade, onAdd, on
         setAttachments(prev => [...prev, ...newAttachments]);
       } catch (err: any) {
         console.error("Upload error details:", err);
-        alert(`Storage Error: ${err.message || 'Check Supabase buckets'}`);
+        alert(`Storage Error: ${err.message || 'Check if trade-attachments bucket exists in Supabase Storage'}`);
       } finally {
         setIsUploading(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
       }
     }
   };
@@ -132,23 +133,23 @@ const TradeEntryForm: React.FC<TradeEntryFormProps> = ({ initialTrade, onAdd, on
 
   const handleSubmit = async () => {
     if (isUploading) {
-      alert("File upload in progress. Please wait.");
+      alert("Please wait for evidence upload to finish.");
       return;
     }
 
     const finalSymbol = symbol === 'OTHER' ? customSymbol.toUpperCase() : symbol;
     if (!finalSymbol) {
-      alert("Asset identifier is required.");
+      alert("A Market Ticker symbol is required.");
       return;
     }
 
     if (!entryPrice || parseNum(entryPrice) <= 0) {
-      alert("Please enter a valid Entry Price.");
+      alert("Please specify a valid Entry Price.");
       return;
     }
 
     if (!quantity || parseNum(quantity) <= 0) {
-      alert("Please enter a valid Quantity.");
+      alert("Lot Size/Quantity must be greater than zero.");
       return;
     }
 
@@ -157,9 +158,12 @@ const TradeEntryForm: React.FC<TradeEntryFormProps> = ({ initialTrade, onAdd, on
     setIsSubmitting(true);
 
     try {
+      const entryISO = isValidDate(entryDate) ? new Date(entryDate).toISOString() : new Date().toISOString();
+      const exitISO = isClosed ? (isValidDate(exitDate) ? new Date(exitDate).toISOString() : new Date().toISOString()) : undefined;
+
       const newTrade: Trade = {
         ...(initialTrade || {}),
-        userId: userId, // Pass current userId, storageService will verify it matches session
+        userId: initialTrade?.userId || userId,
         id: initialTrade?.id || generateUUID(),
         symbol: finalSymbol,
         type,
@@ -167,8 +171,8 @@ const TradeEntryForm: React.FC<TradeEntryFormProps> = ({ initialTrade, onAdd, on
         entryPrice: parseNum(entryPrice),
         exitPrice: isClosed ? parseNum(exitPrice) : undefined,
         quantity: parseNum(quantity),
-        entryDate: isValidDate(entryDate) ? new Date(entryDate).toISOString() : new Date().toISOString(),
-        exitDate: isClosed ? (isValidDate(exitDate) ? new Date(exitDate).toISOString() : new Date().toISOString()) : undefined,
+        entryDate: entryISO,
+        exitDate: exitISO,
         fees: parseNum(fees),
         status: isClosed ? TradeStatus.CLOSED : TradeStatus.OPEN,
         tags: initialTrade?.tags || [],
@@ -188,8 +192,8 @@ const TradeEntryForm: React.FC<TradeEntryFormProps> = ({ initialTrade, onAdd, on
 
       await onAdd(newTrade);
     } catch (err: any) {
-      console.error("Form Submission Error:", err);
-      // Parent App.tsx handleAddTrade alert will catch and display specific DB error
+      console.error("Submission Error:", err);
+      alert(`Commit Failure: ${err.message || 'Ensure your database schema is correct'}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -272,7 +276,7 @@ const TradeEntryForm: React.FC<TradeEntryFormProps> = ({ initialTrade, onAdd, on
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Quantity</label>
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Lot Size / Qty</label>
                   <input type="number" required value={quantity} onChange={(e) => setQuantity(e.target.value)} className="w-full bg-[#0a0f1d] border border-[#1e293b] rounded-2xl p-4 focus:ring-2 focus:ring-emerald-500 outline-none text-white font-mono font-bold" />
                 </div>
                 <div className="space-y-2">
@@ -344,7 +348,7 @@ const TradeEntryForm: React.FC<TradeEntryFormProps> = ({ initialTrade, onAdd, on
                 </div>
               </div>
               <div className="space-y-4">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Setup Node</label>
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Setup Logic</label>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   {STRATEGIES.map(s => (
                     <button key={s} type="button" onClick={() => handleToggle(selectedStrategies, setSelectedStrategies, s)} className={`py-3 px-2 rounded-xl text-[10px] font-black uppercase tracking-tighter border transition-all ${selectedStrategies.includes(s) ? 'bg-emerald-500 border-emerald-400 text-slate-900 shadow-lg' : 'bg-[#0a0f1d] border-[#1e293b] text-slate-500'}`}>{s}</button>
@@ -376,7 +380,7 @@ const TradeEntryForm: React.FC<TradeEntryFormProps> = ({ initialTrade, onAdd, on
                     <button 
                       type="button" 
                       onClick={() => fileInputRef.current?.click()} 
-                      disabled={isUploading}
+                      disabled={isUploading || isSubmitting}
                       className="aspect-square border-2 border-dashed border-[#1e293b] rounded-2xl flex flex-col items-center justify-center text-slate-600 hover:border-emerald-500 hover:text-emerald-500 transition-all"
                     >
                       {isUploading ? (
@@ -384,7 +388,7 @@ const TradeEntryForm: React.FC<TradeEntryFormProps> = ({ initialTrade, onAdd, on
                       ) : (
                         <svg className="w-8 h-8 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
                       )}
-                      <span className="text-[9px] font-black uppercase tracking-widest mt-1">{isUploading ? 'Cloud Sync...' : 'Evidence'}</span>
+                      <span className="text-[9px] font-black uppercase tracking-widest mt-1">{isUploading ? 'Syncing...' : 'Evidence'}</span>
                     </button>
                   </div>
                 </div>
@@ -397,13 +401,13 @@ const TradeEntryForm: React.FC<TradeEntryFormProps> = ({ initialTrade, onAdd, on
       <div className="p-6 bg-[#0a0f1d] border-t border-[#1e293b] flex gap-4">
         {currentStep > 1 && <button type="button" onClick={prevStep} className="flex-1 bg-[#111827] hover:bg-[#1e293b] text-slate-300 font-black py-4 rounded-2xl border border-[#1e293b]" disabled={isSubmitting}>Back</button>}
         {currentStep < 3 ? (
-          <button type="button" onClick={nextStep} className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-black py-4 rounded-2xl shadow-lg" disabled={isUploading}>Continue</button>
+          <button type="button" onClick={nextStep} className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-black py-4 rounded-2xl shadow-lg" disabled={isSubmitting}>Continue</button>
         ) : (
           <button 
             type="button" 
             onClick={handleSubmit} 
             disabled={isSubmitting || isUploading}
-            className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-black py-4 rounded-2xl shadow-lg flex items-center justify-center gap-3"
+            className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-black py-4 rounded-2xl shadow-lg flex items-center justify-center gap-3 disabled:opacity-50"
           >
             {isSubmitting ? (
               <><div className="w-4 h-4 border-2 border-slate-900 border-t-transparent rounded-full animate-spin"></div> SYNCING...</>

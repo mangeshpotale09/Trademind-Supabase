@@ -6,20 +6,6 @@ export const generateUUID = (): string => crypto.randomUUID();
 
 const PROFILE_CACHE_KEY = 'tm_cached_profile';
 
-// Plan pricing logic
-export const PLAN_PRICES: Record<PlanType, number> = {
-  [PlanType.MONTHLY]: 299,
-  [PlanType.SIX_MONTHS]: 599,
-  [PlanType.ANNUAL]: 999
-};
-
-// Plan duration logic (in days)
-export const PLAN_DURATIONS: Record<PlanType, number> = {
-  [PlanType.MONTHLY]: 30,
-  [PlanType.SIX_MONTHS]: 180,
-  [PlanType.ANNUAL]: 365
-};
-
 // --- P&L Calculations ---
 
 export const calculateGrossPnL = (trade: Trade): number => {
@@ -73,7 +59,6 @@ export const getCurrentUser = async (passedSession?: any): Promise<User | null> 
       try {
         const cached = JSON.parse(cachedStr) as User;
         if (cached.id === session.user.id) {
-          // Re-validate in background
           fetchAndCacheProfile(session.user.id, session.user.email, session.user.user_metadata);
           return cached;
         }
@@ -90,52 +75,52 @@ export const getCurrentUser = async (passedSession?: any): Promise<User | null> 
 };
 
 const fetchAndCacheProfile = async (uid: string, email: string, metadata: any): Promise<User | null> => {
-  const { data: profileData, error } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', uid)
-    .maybeSingle();
+  try {
+    const { data: profileData, error } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', uid)
+      .maybeSingle();
 
-  if (error) {
-    console.error("Fetch profile error:", error);
+    if (error) throw error;
+
+    let userObj: User;
+
+    if (!profileData) {
+      userObj = {
+        id: uid,
+        displayId: `TM-${uid.substring(0, 6).toUpperCase()}`,
+        email: email || '',
+        name: metadata?.name || 'Trader',
+        isPaid: false,
+        role: UserRole.USER,
+        status: UserStatus.PENDING,
+        joinedAt: new Date().toISOString(),
+        ownReferralCode: ''
+      };
+    } else {
+      userObj = {
+        id: profileData.id,
+        displayId: profileData.display_id,
+        email: profileData.email,
+        name: profileData.name,
+        mobile: profileData.mobile,
+        isPaid: profileData.is_paid || profileData.role === 'ADMIN',
+        role: profileData.role as UserRole,
+        status: profileData.status as UserStatus,
+        joinedAt: profileData.joined_at,
+        ownReferralCode: profileData.own_referral_code,
+        paymentScreenshot: profileData.payment_screenshot,
+        selectedPlan: profileData.selected_plan as PlanType
+      };
+    }
+
+    localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(userObj));
+    return userObj;
+  } catch (err) {
+    console.error("Profile fetch/cache failed:", err);
     return null;
   }
-
-  let userObj: User;
-
-  if (!profileData) {
-    userObj = {
-      id: uid,
-      displayId: `TM-${uid.substring(0, 6).toUpperCase()}`,
-      email: email || '',
-      name: metadata?.name || 'Trader',
-      isPaid: false,
-      role: UserRole.USER,
-      status: UserStatus.PENDING,
-      joinedAt: new Date().toISOString(),
-      ownReferralCode: ''
-    };
-  } else {
-    userObj = {
-      id: profileData.id,
-      displayId: profileData.display_id,
-      email: profileData.email,
-      name: profileData.name,
-      mobile: profileData.mobile,
-      isPaid: profileData.is_paid || profileData.role === 'ADMIN',
-      role: profileData.role as UserRole,
-      status: profileData.status as UserStatus,
-      joinedAt: profileData.joined_at,
-      ownReferralCode: profileData.own_referral_code,
-      paymentScreenshot: profileData.payment_screenshot,
-      selectedPlan: profileData.selected_plan as PlanType,
-      amountPaid: profileData.amount_paid,
-      expiryDate: profileData.expiry_date
-    };
-  }
-
-  localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(userObj));
-  return userObj;
 };
 
 // --- Auth Methods ---
@@ -156,8 +141,6 @@ export const validateLogin = async (email: string, password: string): Promise<Us
     password
   });
   if (error) throw error;
-  // Clear cache on login to ensure fresh data
-  localStorage.removeItem(PROFILE_CACHE_KEY);
   return getCurrentUser();
 };
 
@@ -171,7 +154,12 @@ export const uploadAttachment = async (userId: string, file: File): Promise<stri
   const fileExt = file.name.split('.').pop();
   const fileName = `${userId}/${generateUUID()}.${fileExt}`;
   const { error } = await supabase.storage.from('trade-attachments').upload(fileName, file);
-  if (error) throw error;
+  
+  if (error) {
+    console.error("Upload Error:", error);
+    throw new Error(`STORAGE_FAIL: ${error.message}`);
+  }
+
   const { data: { publicUrl } } = supabase.storage.from('trade-attachments').getPublicUrl(fileName);
   return publicUrl;
 };
@@ -179,19 +167,15 @@ export const uploadAttachment = async (userId: string, file: File): Promise<stri
 export const submitPaymentProof = async (userId: string, plan: PlanType, file: File): Promise<void> => {
   const fileExt = file.name.split('.').pop();
   const fileName = `${userId}/proof_${generateUUID()}.${fileExt}`;
-  
   const { error: uploadError } = await supabase.storage.from('payment-proofs').upload(fileName, file);
-  if (uploadError) throw uploadError;
+  if (uploadError) throw new Error(`PROOF_UPLOAD_FAIL: ${uploadError.message}`);
 
   const { data: { publicUrl } } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
-  const amount = PLAN_PRICES[plan];
-
   const { error: updateError } = await supabase
     .from('profiles')
     .update({
       payment_screenshot: publicUrl,
       selected_plan: plan,
-      amount_paid: amount,
       status: UserStatus.WAITING_APPROVAL
     })
     .eq('id', userId);
@@ -222,14 +206,14 @@ export const getStoredTrades = async (userId?: string): Promise<Trade[]> => {
       exitDate: t.exit_date,
       fees: Number(t.fees),
       status: t.status as TradeStatus,
-      tags: Array.isArray(t.tags) ? t.tags : [],
+      tags: t.tags || [],
       notes: t.notes || '',
       optionDetails: t.option_details,
       aiReview: t.ai_review,
       attachments: Array.isArray(t.attachments) ? t.attachments : [],
-      emotions: Array.isArray(t.emotions) ? t.emotions : [],
-      mistakes: Array.isArray(t.mistakes) ? t.mistakes : [],
-      strategies: Array.isArray(t.strategies) ? t.strategies : []
+      emotions: t.emotions || [],
+      mistakes: t.mistakes || [],
+      strategies: t.strategies || []
     }));
   } catch (err) {
     console.error("Fetch trades error:", err);
@@ -238,48 +222,42 @@ export const getStoredTrades = async (userId?: string): Promise<Trade[]> => {
 };
 
 export const saveTrade = async (trade: Trade): Promise<void> => {
-  // CRITICAL: Fetch current auth UID to prevent RLS violations from stale frontend state
   const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new Error("Unauthorized: No active session found.");
-  
-  const authenticatedUserId = session.user.id;
+  if (!session) throw new Error("AUTH_SESSION_MISSING: Login required to save trades.");
 
-  // Map to DB columns with safety checks
+  const isTargetAdmin = session.user.email === 'mangeshpotale09@gmail.com';
+  // CRITICAL: Ensure we are sending the authenticated user's ID for the row unless admin
+  const targetUserId = isTargetAdmin ? trade.userId : session.user.id;
+
   const payload = {
-    id: trade.id || generateUUID(),
-    user_id: authenticatedUserId, // FORCE current user ID
+    id: trade.id,
+    user_id: targetUserId,
     symbol: trade.symbol,
     type: trade.type,
     side: trade.side,
-    entry_price: Number(trade.entryPrice),
-    exit_price: trade.exitPrice !== undefined ? Number(trade.exitPrice) : null,
-    quantity: Number(trade.quantity),
-    entry_date: trade.entryDate || new Date().toISOString(),
+    entry_price: trade.entryPrice,
+    exit_price: trade.exitPrice || null,
+    quantity: trade.quantity,
+    entry_date: trade.entryDate,
     exit_date: trade.exitDate || null,
-    fees: Number(trade.fees || 0),
-    status: trade.status || 'OPEN',
-    tags: trade.tags || [],
-    notes: trade.notes || '',
+    fees: trade.fees,
+    status: trade.status,
+    tags: trade.tags,
+    notes: trade.notes,
     option_details: trade.optionDetails || null,
     ai_review: trade.aiReview || null,
     attachments: trade.attachments || [],
-    emotions: trade.emotions || [],
-    mistakes: trade.mistakes || [],
-    strategies: trade.strategies || []
+    emotions: trade.emotions,
+    mistakes: trade.mistakes,
+    strategies: trade.strategies
   };
-
-  const { error, data } = await supabase
-    .from('trades')
-    .upsert(payload, { onConflict: 'id' })
-    .select();
-    
-  if (error) {
-    console.error("Supabase Save Error:", error);
-    throw new Error(error.message);
-  }
   
-  if (!data || data.length === 0) {
-    throw new Error("Persistence failed: Database rejected the write operation.");
+  console.debug("Saving trade payload:", payload);
+  const { error } = await supabase.from('trades').upsert(payload, { onConflict: 'id' });
+  
+  if (error) {
+    console.error("Save Trade Error:", error);
+    throw new Error(`DB_SYNC_FAIL: ${error.message} (Code: ${error.code}). Ensure user_id matches auth.uid().`);
   }
 };
 
@@ -311,9 +289,7 @@ export const getRegisteredUsers = async (): Promise<User[]> => {
     joinedAt: p.joined_at,
     ownReferralCode: p.own_referral_code,
     paymentScreenshot: p.payment_screenshot,
-    selectedPlan: p.selected_plan as PlanType,
-    amountPaid: p.amount_paid,
-    expiryDate: p.expiry_date
+    selectedPlan: p.selected_plan as PlanType
   }));
 };
 
@@ -331,9 +307,7 @@ export const saveUsers = async (users: User[]): Promise<void> => {
       own_referral_code: user.ownReferralCode,
       payment_screenshot: user.paymentScreenshot,
       selected_plan: user.selectedPlan,
-      is_paid: user.isPaid,
-      amount_paid: user.amountPaid,
-      expiry_date: user.expiryDate
+      is_paid: user.isPaid
     };
     const { error } = await supabase.from('profiles').upsert(payload, { onConflict: 'id' });
     if (error) throw error;
@@ -351,24 +325,10 @@ export const getAdminOverviewStats = async () => {
 };
 
 export const updateUserStatus = async (userId: string, status: UserStatus): Promise<void> => {
-  let updateData: any = { status, is_paid: status === UserStatus.APPROVED };
-
-  if (status === UserStatus.APPROVED) {
-    const { data: profile } = await supabase.from('profiles').select('selected_plan').eq('id', userId).single();
-    if (profile && profile.selected_plan) {
-      const plan = profile.selected_plan as PlanType;
-      const days = PLAN_DURATIONS[plan] || 30;
-      const expiry = new Date();
-      expiry.setDate(expiry.getDate() + days);
-      updateData.expiry_date = expiry.toISOString();
-    }
-  }
-
   const { error } = await supabase
     .from('profiles')
-    .update(updateData)
+    .update({ status, is_paid: status === UserStatus.APPROVED })
     .eq('id', userId);
-    
   if (error) throw error;
 };
 

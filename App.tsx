@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Trade, User, UserRole, UserStatus } from './types';
 import { 
   getStoredTrades, 
@@ -17,7 +17,6 @@ import AnalysisView from './components/AnalysisView';
 import MistakesView from './components/MistakesView';
 import EmotionsView from './components/EmotionsView';
 import AIInsightsView from './components/AIInsightsView';
-import StudioView from './components/StudioView';
 import AdminView from './components/AdminView';
 import AuthView from './components/AuthView';
 import PaymentView from './components/PaymentView';
@@ -28,11 +27,10 @@ const App: React.FC = () => {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isInitializing, setIsInitializing] = useState(true);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'journal' | 'analysis' | 'mistakes' | 'emotions' | 'ai' | 'studio' | 'admin'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'journal' | 'analysis' | 'mistakes' | 'emotions' | 'ai' | 'admin'>('dashboard');
   const [isEntryFormOpen, setIsEntryFormOpen] = useState(false);
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
-  const [showPaymentFlow, setShowPaymentFlow] = useState(false);
 
   const syncIdentity = useCallback(async (session: any) => {
     const user = await getCurrentUser(session);
@@ -70,23 +68,9 @@ const App: React.FC = () => {
     };
   }, [syncIdentity]);
 
-  // Derived Access State
-  const isAccessExpired = useMemo(() => {
-    if (!currentUser || currentUser.role === UserRole.ADMIN) return false;
-    if (!currentUser.expiryDate) return false;
-    return new Date() > new Date(currentUser.expiryDate);
-  }, [currentUser]);
-
-  const isUserApproved = useMemo(() => {
-    if (!currentUser) return false;
-    if (currentUser.role === UserRole.ADMIN) return true;
-    return currentUser.status === UserStatus.APPROVED && !isAccessExpired;
-  }, [currentUser, isAccessExpired]);
-
-  // Load Trades for authorized users
   useEffect(() => {
     const load = async () => {
-      if (currentUser?.id && isUserApproved) {
+      if (currentUser?.id && (currentUser.status === UserStatus.APPROVED || currentUser.role === UserRole.ADMIN)) {
         setIsLoading(true);
         try {
           const data = await getStoredTrades(currentUser.id);
@@ -99,26 +83,12 @@ const App: React.FC = () => {
       }
     };
     load();
-  }, [currentUser?.id, isUserApproved]);
+  }, [currentUser?.id, currentUser?.status, currentUser?.role]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
     localStorage.removeItem('tm_cached_profile');
     setCurrentUser(null);
-    setShowPaymentFlow(false);
-  };
-
-  const handleExecuteTradeClick = () => {
-    if (currentUser?.role === UserRole.ADMIN) {
-      setIsEntryFormOpen(true);
-      return;
-    }
-
-    if (!isUserApproved) {
-      setShowPaymentFlow(true);
-    } else {
-      setIsEntryFormOpen(true);
-    }
   };
 
   if (isInitializing) {
@@ -130,12 +100,24 @@ const App: React.FC = () => {
     );
   }
 
-  // Gated State: No Login
   if (!currentUser) {
     return <AuthView onAuthComplete={setCurrentUser} />;
   }
 
-  // Gated State: WAITING_APPROVAL or REJECTED
+  if (currentUser.role === UserRole.USER && currentUser.status === UserStatus.PENDING) {
+    return (
+      <PaymentView 
+        user={currentUser} 
+        onPaymentSubmitted={async () => {
+          setIsLoading(true);
+          const updated = await getCurrentUser();
+          setCurrentUser(updated);
+          setIsLoading(false);
+        }} 
+      />
+    );
+  }
+
   if (currentUser.role === UserRole.USER && (currentUser.status === UserStatus.WAITING_APPROVAL || currentUser.status === UserStatus.REJECTED)) {
     return (
       <UserVerificationStatus 
@@ -151,71 +133,18 @@ const App: React.FC = () => {
     );
   }
 
-  // Gated State: Payment Flow (triggered by Execute Trade, Banner, or Expiry)
-  if (showPaymentFlow || isAccessExpired) {
-    return (
-      <div className="animate-in fade-in duration-500 bg-[#070a13] min-h-screen">
-        <nav className="p-6 border-b border-[#1e293b] flex justify-between items-center bg-[#0e1421] sticky top-0 z-[100]">
-          <div>
-            <h2 className="text-xl font-black text-white">{isAccessExpired ? 'Access Expired' : 'Payment Subscription'}</h2>
-            <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">
-              {isAccessExpired ? 'Your plan has expired. Renew to continue logging.' : 'Verification Required for Node Access'}
-            </p>
-          </div>
-          <button onClick={() => setShowPaymentFlow(false)} className="bg-white/5 p-3 rounded-full text-slate-500 hover:text-white transition-colors">
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-          </button>
-        </nav>
-        <PaymentView 
-          user={currentUser} 
-          onPaymentSubmitted={async () => {
-            setIsLoading(true);
-            const updated = await getCurrentUser(); 
-            setCurrentUser(updated);
-            setShowPaymentFlow(false);
-            setIsLoading(false);
-          }} 
-        />
-      </div>
-    );
-  }
-
   const navigationItems = [
     { id: 'dashboard', label: 'Dash', color: 'bg-emerald-500' },
     { id: 'journal', label: 'Log', color: 'bg-cyan-500' },
     { id: 'analysis', label: 'Edge', color: 'bg-violet-500' },
     { id: 'mistakes', label: 'Leak', color: 'bg-rose-500' },
     { id: 'emotions', label: 'Mind', color: 'bg-amber-500' },
-    { id: 'ai', label: 'Coach', color: 'bg-blue-500' },
-    { id: 'studio', label: 'Studio', color: 'bg-fuchsia-500' }
+    { id: 'ai', label: 'Coach', color: 'bg-blue-500' }
   ];
 
   if (currentUser.role === UserRole.ADMIN) {
     navigationItems.push({ id: 'admin', label: 'Admin', color: 'bg-purple-600' });
   }
-
-  const handleAddTrade = async (t: Trade) => {
-    setIsLoading(true);
-    try {
-      await saveTrade(t);
-      setTrades(prev => {
-        const index = prev.findIndex(item => item.id === t.id);
-        if (index > -1) {
-          const newTrades = [...prev];
-          newTrades[index] = t;
-          return newTrades;
-        }
-        return [t, ...prev];
-      });
-      setIsEntryFormOpen(false);
-      setEditingTrade(null);
-    } catch (e: any) { 
-      console.error("Critical Save Fault:", e);
-      alert(`Terminal Sync Failure: ${e.message || "Unknown database error"}`); 
-      throw e; 
-    }
-    finally { setIsLoading(false); }
-  };
 
   return (
     <div className="min-h-screen bg-[#070a13] text-slate-200 font-sans selection:bg-emerald-500/30">
@@ -225,7 +154,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Navigation */}
       <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-[#0e1421]/90 backdrop-blur-xl border border-[#1e293b] p-1.5 rounded-3xl shadow-2xl flex items-center gap-1.5 max-w-[96vw] overflow-x-auto no-scrollbar">
         {navigationItems.map((tab) => (
           <button
@@ -259,54 +187,47 @@ const App: React.FC = () => {
           
           <div className="flex items-center gap-3">
             <button onClick={handleLogout} className="px-5 py-3 rounded-xl bg-white/5 text-slate-500 hover:text-red-400 transition-all text-[9px] font-black uppercase tracking-widest border border-white/5">Exit</button>
-            <button onClick={handleExecuteTradeClick} className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-black px-8 py-3 rounded-xl transition-all shadow-xl shadow-emerald-500/10 text-[10px] uppercase tracking-widest">Execute Trade</button>
+            <button onClick={() => { setEditingTrade(null); setIsEntryFormOpen(true); }} className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-black px-8 py-3 rounded-xl transition-all shadow-xl shadow-emerald-500/10 text-[10px] uppercase tracking-widest">Execute Trade</button>
           </div>
         </header>
 
         <div className="animate-in fade-in slide-in-from-bottom-4 duration-1000">
-          {!isUserApproved && currentUser.role !== UserRole.ADMIN && (
-            <div className="mb-10 p-8 bg-amber-500/10 border border-amber-500/20 rounded-[2.5rem] flex flex-col md:flex-row items-center justify-between gap-6">
-              <div className="flex items-center gap-6">
-                <div className="w-16 h-16 bg-amber-500/10 text-amber-500 rounded-2xl flex items-center justify-center text-3xl shadow-inner border border-amber-500/10">🔑</div>
-                <div>
-                  <h4 className="text-white font-black text-sm uppercase tracking-widest">
-                    {isAccessExpired ? 'Plan Expired' : 'Authorized Access Required'}
-                  </h4>
-                  <p className="text-slate-400 text-xs mt-1">
-                    {isAccessExpired ? 'Your access has expired. Please renew your subscription to continue.' : 'Verification of payment is mandatory before accessing live trade logging and AI audit features.'}
-                  </p>
-                </div>
-              </div>
-              <button onClick={() => setShowPaymentFlow(true)} className="w-full md:w-auto bg-amber-500 text-slate-900 px-10 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-amber-500/10 hover:scale-105 transition-all">
-                {isAccessExpired ? 'Renew Access' : 'Enable Full Access'}
-              </button>
-            </div>
-          )}
-
           {activeTab === 'dashboard' && <Dashboard trades={trades} />}
           {activeTab === 'journal' && <TradeList trades={trades} onSelect={setSelectedTrade} isAdmin={currentUser.role === UserRole.ADMIN} />}
           {activeTab === 'analysis' && <AnalysisView trades={trades} />}
           {activeTab === 'mistakes' && <MistakesView trades={trades} />}
           {activeTab === 'emotions' && <EmotionsView trades={trades} />}
           {activeTab === 'ai' && <AIInsightsView trades={trades} />}
-          {activeTab === 'studio' && <StudioView />}
           {activeTab === 'admin' && currentUser.role === UserRole.ADMIN && <AdminView />}
         </div>
       </main>
 
-      {/* Entry Form Modal */}
       {isEntryFormOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-300">
           <TradeEntryForm 
             userId={currentUser.id}
-            onAdd={handleAddTrade}
-            onCancel={() => { setIsEntryFormOpen(false); setEditingTrade(null); }}
+            onAdd={async (t) => {
+              setIsLoading(true);
+              try {
+                await saveTrade(t);
+                if (editingTrade) {
+                  setTrades(prev => prev.map(item => item.id === t.id ? t : item));
+                } else {
+                  setTrades(prev => [t, ...prev]);
+                }
+                setIsEntryFormOpen(false);
+              } catch (e: any) { 
+                alert(`CRITICAL SYNC FAILURE: ${e.message || "Unknown Database Error"}`); 
+              } finally { 
+                setIsLoading(false); 
+              }
+            }}
+            onCancel={() => setIsEntryFormOpen(false)}
             initialTrade={editingTrade || undefined}
           />
         </div>
       )}
 
-      {/* Trade Detail Modal */}
       {selectedTrade && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-300">
           <div className="w-full max-w-5xl">
@@ -320,10 +241,10 @@ const App: React.FC = () => {
                   setTrades(prev => prev.map(old => old.id === t.id ? t : old));
                   setSelectedTrade(t);
                 } catch (e: any) { 
-                  console.error("Update Error:", e);
-                  alert(`Update failed: ${e.message || "Unknown error"}`); 
+                  alert(`UPDATE FAILED: ${e.message}`); 
+                } finally { 
+                  setIsLoading(false); 
                 }
-                finally { setIsLoading(false); }
               }}
               onDelete={async (id) => {
                 setIsLoading(true);
@@ -332,10 +253,10 @@ const App: React.FC = () => {
                   setTrades(prev => prev.filter(t => t.id !== id));
                   setSelectedTrade(null);
                 } catch (e: any) { 
-                  console.error("Delete Error:", e);
-                  alert(`Delete failed: ${e.message || "Unknown error"}`); 
+                  alert(`PURGE FAILED: ${e.message}`); 
+                } finally { 
+                  setIsLoading(false); 
                 }
-                finally { setIsLoading(false); }
               }}
               onEdit={(t) => { setEditingTrade(t); setIsEntryFormOpen(true); }}
               isAdmin={currentUser.role === UserRole.ADMIN}
