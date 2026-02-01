@@ -112,7 +112,7 @@ const Dashboard: React.FC<DashboardProps> = ({ trades, onExport }) => {
 
   return (
     <div className="space-y-6">
-      {/* Legend-style Header from Attachment */}
+      {/* Legend-style Header */}
       <div className="flex items-center justify-center gap-8 py-2 mb-2">
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded-full bg-emerald-500"></div>
@@ -153,67 +153,11 @@ const Dashboard: React.FC<DashboardProps> = ({ trades, onExport }) => {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-5 gap-4">
-        <StatCard 
-          label="Net P&L" 
-          value={`₹${stats.totalNetPnL.toLocaleString()}`} 
-          subValue={`Gross: ₹${stats.totalGrossPnL.toLocaleString()}`}
-          trend={stats.totalNetPnL >= 0 ? 'up' : 'down'}
-          color={stats.totalNetPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}
-        />
-        <StatCard 
-          label="Total Trades" 
-          value={stats.closedCount} 
-          subValue="Completed Cycles"
-          color="text-slate-200"
-        />
-        <StatCard 
-          label="Largest Win" 
-          value={`₹${stats.bestTradePnL.toLocaleString()}`} 
-          subValue="Max Realized Profit"
-          color="text-emerald-400"
-        />
-        <StatCard 
-          label="Largest Loss" 
-          value={`₹${stats.worstTradePnL.toLocaleString()}`} 
-          subValue="Max Realized Loss"
-          color="text-red-400"
-        />
-        <StatCard 
-          label="Brokerages" 
-          value={`₹${stats.totalFees.toLocaleString()}`} 
-          subValue="Total Platform Fees"
-          color="text-red-400"
-        />
-        <StatCard 
-          label="Win Rate" 
-          value={`${stats.winRate.toFixed(1)}%`} 
-          subValue="Realized Success"
-          color="text-emerald-400"
-        />
-        <StatCard 
-          label="Risk/Reward" 
-          value={`1:${stats.rrr.toFixed(2)}`} 
-          subValue="Avg Win / Avg Loss"
-          color="text-emerald-400"
-        />
-        <StatCard 
-          label="Profit Factor" 
-          value={stats.profitFactor.toFixed(2)} 
-          subValue="Gross Win / Loss"
-          color={stats.profitFactor >= 1 ? 'text-emerald-400' : 'text-red-400'}
-        />
-        <StatCard 
-          label="Avg Win" 
-          value={`₹${stats.avgWin.toFixed(0)}`} 
-          subValue="Per Winning Trade"
-          color="text-emerald-400"
-        />
-        <StatCard 
-          label="Avg Loss" 
-          value={`₹${stats.avgLoss.toFixed(0)}`} 
-          subValue="Per Losing Trade"
-          color="text-red-400"
-        />
+        <StatCard label="Net P&L" value={`₹${stats.totalNetPnL.toLocaleString()}`} subValue={`Gross: ₹${stats.totalGrossPnL.toLocaleString()}`} trend={stats.totalNetPnL >= 0 ? 'up' : 'down'} color={stats.totalNetPnL >= 0 ? 'text-emerald-400' : 'text-red-400'} />
+        <StatCard label="Total Trades" value={stats.closedCount} subValue="Completed Cycles" color="text-slate-200" />
+        <StatCard label="Largest Win" value={`₹${stats.bestTradePnL.toLocaleString()}`} subValue="Max Realized Profit" color="text-emerald-400" />
+        <StatCard label="Largest Loss" value={`₹${stats.worstTradePnL.toLocaleString()}`} subValue="Max Realized Loss" color="text-red-400" />
+        <StatCard label="Brokerages" value={`₹${stats.totalFees.toLocaleString()}`} subValue="Total Platform Fees" color="text-red-400" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -239,7 +183,15 @@ const Dashboard: React.FC<DashboardProps> = ({ trades, onExport }) => {
                   itemStyle={{ color: '#10b981' }}
                   formatter={(value) => [`₹${Number(value).toLocaleString()}`, 'Net P&L']}
                 />
-                <Area type="monotone" dataKey="pnl" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorPnL)" />
+                <Area 
+                  isAnimationActive={false} /* Mobile optimization: Disable animation */
+                  type="monotone" 
+                  dataKey="pnl" 
+                  stroke="#10b981" 
+                  strokeWidth={3} 
+                  fillOpacity={1} 
+                  fill="url(#colorPnL)" 
+                />
               </AreaChart>
             </ResponsiveContainer>
           </div>
@@ -251,6 +203,7 @@ const Dashboard: React.FC<DashboardProps> = ({ trades, onExport }) => {
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
+                  isAnimationActive={false} /* Mobile optimization: Disable animation */
                   data={assetDistribution}
                   cx="50%"
                   cy="50%"
@@ -264,9 +217,7 @@ const Dashboard: React.FC<DashboardProps> = ({ trades, onExport }) => {
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
-                <Tooltip 
-                   contentStyle={{ backgroundColor: '#070a13', borderColor: '#1e293b', color: '#f8fafc' }}
-                />
+                <Tooltip contentStyle={{ backgroundColor: '#070a13', borderColor: '#1e293b', color: '#f8fafc' }} />
               </PieChart>
             </ResponsiveContainer>
           </div>
@@ -285,7 +236,7 @@ const Dashboard: React.FC<DashboardProps> = ({ trades, onExport }) => {
 };
 
 const StatCard = ({ label, value, subValue, trend, color }: any) => (
-  <div className="bg-[#0e1421] p-5 rounded-2xl border border-[#1e293b] shadow-lg flex flex-col justify-between h-full transition-transform hover:scale-[1.02]">
+  <div className="bg-[#0e1421] p-5 rounded-2xl border border-[#1e293b] shadow-lg flex flex-col justify-between h-full transition-transform active:scale-[0.98]">
     <div>
       <span className="text-slate-500 text-[10px] font-black uppercase tracking-widest">{label}</span>
       <div className="flex items-baseline gap-2 mt-2">

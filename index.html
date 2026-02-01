@@ -3,85 +3,88 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>TradeMind AI Journal</title>
     
-    <!-- PWA & Mobile Meta -->
     <meta name="theme-color" content="#070a13" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <meta name="apple-mobile-web-app-title" content="TradeMind" />
-    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/2422/2422796.png" />
     
-    <!-- Critical Environment Shim -->
+    <link rel="preconnect" href="https://esm.sh" crossorigin />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
     <script>
       window.process = { env: { API_KEY: "" } };
+      // Register Service Worker for offline/fast load
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(err => console.error('SW failed', err));
+        });
+      }
     </script>
 
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap" rel="stylesheet">
     
-    <!-- Google API Scripts -->
-    <script src="https://apis.google.com/js/api.js" async defer></script>
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
-
     <style>
-      html {
-        font-size: 13px;
+      :root { --bg: #070a13; --accent: #10b981; }
+      body { background-color: var(--bg); margin: 0; font-family: 'Inter', sans-serif; overflow-x: hidden; }
+      #root { min-height: 100vh; }
+      
+      /* Splash Screen */
+      #splash {
+        position: fixed; inset: 0; background: var(--bg); 
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        z-index: 9999; transition: opacity 0.5s ease-out;
       }
-      body {
-        font-family: 'Inter', sans-serif;
-        background-color: #070a13;
-        color: #f8fafc;
-        overscroll-behavior-y: contain;
+      .logo-ring {
+        width: 80px; height: 80px; border-radius: 24px; background: var(--accent);
+        display: flex; align-items: center; justify-content: center;
+        font-weight: 900; font-size: 32px; color: #000;
+        box-shadow: 0 0 40px rgba(16, 185, 129, 0.2);
+        animation: pulse 2s infinite ease-in-out;
       }
-      ::-webkit-scrollbar {
-        width: 8px;
-      }
-      ::-webkit-scrollbar-track {
-        background: #0a0f1d;
-      }
-      ::-webkit-scrollbar-thumb {
-        background: #1e293b;
-        border-radius: 4px;
-      }
-      ::-webkit-scrollbar-thumb:hover {
-        background: #334155;
-      }
-      .no-select {
-        -webkit-touch-callout: none;
-        -webkit-user-select: none;
-        user-select: none;
-      }
-      .card-dark {
-        background-color: #0e1421;
-        border: 1px solid #1e293b;
-      }
-      .no-scrollbar::-webkit-scrollbar {
-        display: none;
-      }
-      .no-scrollbar {
-        -ms-overflow-style: none;
-        scrollbar-width: none;
-      }
+      @keyframes pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(0.95); opacity: 0.8; } }
+      .splash-text { margin-top: 24px; color: #fff; font-weight: 900; letter-spacing: -0.05em; font-size: 24px; }
+      .splash-sub { margin-top: 8px; color: #475569; font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.3em; }
+      
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
-  <script type="importmap">
-{
-  "imports": {
-    "recharts": "https://esm.sh/recharts@2.15.0",
-    "@google/genai": "https://esm.sh/@google/genai@^1.38.0",
-    "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@^2.45.0",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react": "https://esm.sh/react@^19.2.3"
-  }
-}
-</script>
-</head>
-  <body class="no-select">
+
+    <script type="importmap">
+    {
+      "imports": {
+        "recharts": "https://esm.sh/recharts@2.15.0?bundle",
+        "@google/genai": "https://esm.sh/@google/genai@^1.38.0?bundle",
+        "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@^2.45.0?bundle",
+        "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+        "react/": "https://esm.sh/react@^19.2.3/",
+        "react": "https://esm.sh/react@^19.2.3"
+      }
+    }
+    </script>
+  </head>
+  <body>
+    <div id="splash">
+      <div class="logo-ring">TM</div>
+      <div class="splash-text">TradeMind <span style="color: var(--accent)">AI</span></div>
+      <div class="splash-sub">Performance Node Loading</div>
+    </div>
     <div id="root"></div>
     <script type="module" src="./index.tsx"></script>
+    <script>
+      // Remove splash once React is ready
+      window.addEventListener('load', () => {
+        const checkReady = setInterval(() => {
+          if (document.querySelector('#root > div')) {
+            const s = document.getElementById('splash');
+            if (s) { s.style.opacity = '0'; setTimeout(() => s.remove(), 500); }
+            clearInterval(checkReady);
+          }
+        }, 100);
+      });
+    </script>
   </body>
 </html>
