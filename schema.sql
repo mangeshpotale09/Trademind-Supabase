@@ -1,19 +1,10 @@
 
 -- ==========================================
--- TERMINAL DATABASE RECOVERY & RLS FIX
+-- TRADE MIND AI: CORE DATABASE SCHEMA
+-- RUN THIS IN SUPABASE SQL EDITOR ONLY
 -- ==========================================
 
--- 1. CLEANUP: DROP ALL EXISTING POLICIES TO AVOID CONFLICTS
-do $$ 
-declare
-    pol record;
-begin
-    for pol in (select policyname, tablename from pg_policies where schemaname = 'public' and tablename in ('profiles', 'trades', 'transactions')) loop
-        execute format('drop policy if exists %I on %I', pol.policyname, pol.tablename);
-    end loop;
-end $$;
-
--- 2. TABLES RE-VERIFICATION
+-- 1. Setup Profiles
 create table if not exists public.profiles (
   id uuid references auth.users on delete cascade primary key,
   display_id text unique,
@@ -26,9 +17,12 @@ create table if not exists public.profiles (
   joined_at timestamp with time zone default timezone('utc'::text, now()),
   own_referral_code text unique,
   payment_screenshot text,
-  selected_plan text
+  selected_plan text,
+  amount_paid numeric default 0,
+  expiry_date timestamp with time zone
 );
 
+-- 2. Setup Trades
 create table if not exists public.trades (
   id uuid primary key,
   user_id uuid references auth.users on delete cascade not null,
@@ -53,40 +47,28 @@ create table if not exists public.trades (
   created_at timestamp with time zone default timezone('utc'::text, now())
 );
 
--- 3. ENABLE RLS
+-- 3. Security (RLS)
 alter table public.profiles enable row level security;
 alter table public.trades enable row level security;
 
--- 4. PROFILES POLICIES
-create policy "profiles_owner_policy" on public.profiles
-for all 
-using (auth.uid() = id)
-with check (auth.uid() = id);
+-- Drop existing policies to prevent duplication errors
+drop policy if exists "Users can view own profile" on public.profiles;
+drop policy if exists "Users can update own profile" on public.profiles;
+drop policy if exists "Users can view own trades" on public.trades;
+drop policy if exists "Users can manage own trades" on public.trades;
 
-create policy "profiles_admin_policy" on public.profiles
-for all 
-using ((auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com')
-with check ((auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com');
+-- Define Policies
+create policy "Users can view own profile" on public.profiles for select using (auth.uid() = id);
+create policy "Users can update own profile" on public.profiles for update using (auth.uid() = id);
 
--- 5. TRADES POLICIES (Combined FOR ALL to ensure UPSERT works correctly)
-create policy "trades_owner_policy" on public.trades
-for all 
-using (auth.uid() = user_id)
-with check (auth.uid() = user_id);
+create policy "Users can view own trades" on public.trades for select using (auth.uid() = user_id);
+create policy "Users can manage own trades" on public.trades for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
-create policy "trades_admin_policy" on public.trades
-for all 
-using ((auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com')
-with check ((auth.jwt() ->> 'email') = 'mangeshpotale09@gmail.com');
+-- 4. Storage Setup Instructions (Manual)
+-- Ensure 'trade-attachments' and 'payment-proofs' buckets exist in Supabase Storage with Public access enabled.
 
--- 6. SETUP STORAGE BUCKETS (Note: Manual step in Supabase Dashboard)
--- trade-attachments
--- payment-proofs
-
--- 7. INITIALIZE ADMIN
+-- 5. Admin Bootstrap
+-- Replace with your email to grant yourself root access
 update public.profiles 
 set role = 'ADMIN', is_paid = true, status = 'APPROVED' 
 where lower(email) = 'mangeshpotale09@gmail.com';
-
--- 8. REFRESH SCHEMA CACHE
-notify pgrst, 'reload schema';

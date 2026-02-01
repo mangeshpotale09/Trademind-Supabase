@@ -14,14 +14,12 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 
+    <link rel="modulepreload" href="https://esm.sh/react@19.2.3" />
+    <link rel="modulepreload" href="https://esm.sh/react-dom@19.2.3" />
+    <link rel="modulepreload" href="https://esm.sh/@supabase/supabase-js@2.45.0" />
+
     <script>
       window.process = { env: { API_KEY: "" } };
-      // Register Service Worker for offline/fast load
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').catch(err => console.error('SW failed', err));
-        });
-      }
     </script>
 
     <script src="https://cdn.tailwindcss.com"></script>
@@ -29,28 +27,32 @@
     
     <style>
       :root { --bg: #070a13; --accent: #10b981; }
-      body { background-color: var(--bg); margin: 0; font-family: 'Inter', sans-serif; overflow-x: hidden; }
+      body { 
+        background-color: var(--bg); 
+        margin: 0; 
+        font-family: 'Inter', sans-serif; 
+        overflow-x: hidden;
+        -webkit-tap-highlight-color: transparent;
+      }
       #root { min-height: 100vh; }
       
-      /* Splash Screen */
       #splash {
         position: fixed; inset: 0; background: var(--bg); 
         display: flex; flex-direction: column; align-items: center; justify-content: center;
-        z-index: 9999; transition: opacity 0.5s ease-out;
+        z-index: 9999; transition: opacity 0.4s ease-out;
+        will-change: opacity;
       }
       .logo-ring {
         width: 80px; height: 80px; border-radius: 24px; background: var(--accent);
         display: flex; align-items: center; justify-content: center;
         font-weight: 900; font-size: 32px; color: #000;
         box-shadow: 0 0 40px rgba(16, 185, 129, 0.2);
-        animation: pulse 2s infinite ease-in-out;
+        animation: pulse 1.8s infinite ease-in-out;
+        transform: translateZ(0);
       }
-      @keyframes pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(0.95); opacity: 0.8; } }
+      @keyframes pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(0.96); opacity: 0.8; } }
       .splash-text { margin-top: 24px; color: #fff; font-weight: 900; letter-spacing: -0.05em; font-size: 24px; }
       .splash-sub { margin-top: 8px; color: #475569; font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.3em; }
-      
-      .no-scrollbar::-webkit-scrollbar { display: none; }
-      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 
     <script type="importmap">
@@ -70,17 +72,19 @@
     <div id="splash">
       <div class="logo-ring">TM</div>
       <div class="splash-text">TradeMind <span style="color: var(--accent)">AI</span></div>
-      <div class="splash-sub">Performance Node Loading</div>
+      <div class="splash-sub">Booting Performance Node...</div>
     </div>
     <div id="root"></div>
     <script type="module" src="./index.tsx"></script>
     <script>
-      // Remove splash once React is ready
       window.addEventListener('load', () => {
         const checkReady = setInterval(() => {
           if (document.querySelector('#root > div')) {
             const s = document.getElementById('splash');
-            if (s) { s.style.opacity = '0'; setTimeout(() => s.remove(), 500); }
+            if (s) { 
+              s.style.opacity = '0'; 
+              setTimeout(() => s.remove(), 400); 
+            }
             clearInterval(checkReady);
           }
         }, 100);

@@ -110,8 +110,7 @@ const fetchAndCacheProfile = async (uid: string, email: string, metadata: any): 
         status: profileData.status as UserStatus,
         joinedAt: profileData.joined_at,
         ownReferralCode: profileData.own_referral_code,
-        paymentScreenshot: profileData.payment_screenshot,
-        // Fix: Use selectedPlan to match the User interface property name
+        payment_screenshot: profileData.payment_screenshot,
         selectedPlan: profileData.selected_plan as PlanType,
         amountPaid: profileData.amount_paid,
         expiryDate: profileData.expiry_date
@@ -125,69 +124,6 @@ const fetchAndCacheProfile = async (uid: string, email: string, metadata: any): 
     return null;
   }
 };
-
-// --- Auth Methods ---
-export const registerUser = async (data: any): Promise<User | null> => {
-  const { email, password, name, mobile } = data;
-  const { error } = await supabase.auth.signUp({
-    email: email.toLowerCase().trim(),
-    password,
-    options: { data: { name, mobile } }
-  });
-  if (error) throw error;
-  return getCurrentUser();
-};
-
-export const validateLogin = async (email: string, password: string): Promise<User | null> => {
-  const { error } = await supabase.auth.signInWithPassword({
-    email: email.toLowerCase().trim(),
-    password
-  });
-  if (error) throw error;
-  return getCurrentUser();
-};
-
-export const resetUserPassword = async (email: string, mobile: string, newPass: string): Promise<boolean> => {
-  const { error } = await supabase.auth.updateUser({ password: newPass });
-  return !error;
-};
-
-// --- Storage Methods ---
-export const uploadAttachment = async (userId: string, file: File): Promise<string> => {
-  const fileExt = file.name.split('.').pop();
-  const fileName = `${userId}/${generateUUID()}.${fileExt}`;
-  const { error } = await supabase.storage.from('trade-attachments').upload(fileName, file);
-  
-  if (error) {
-    console.error("Upload Error:", error);
-    throw new Error(`STORAGE_FAIL: ${error.message}`);
-  }
-
-  const { data: { publicUrl } } = supabase.storage.from('trade-attachments').getPublicUrl(fileName);
-  return publicUrl;
-};
-
-export const submitPaymentProof = async (userId: string, plan: PlanType, file: File): Promise<void> => {
-  const fileExt = file.name.split('.').pop();
-  const fileName = `${userId}/proof_${generateUUID()}.${fileExt}`;
-  const { error: uploadError } = await supabase.storage.from('payment-proofs').upload(fileName, file);
-  if (uploadError) throw new Error(`PROOF_UPLOAD_FAIL: ${uploadError.message}`);
-
-  const { data: { publicUrl } } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
-  const { error: updateError } = await supabase
-    .from('profiles')
-    .update({
-      payment_screenshot: publicUrl,
-      selected_plan: plan,
-      status: UserStatus.WAITING_APPROVAL
-    })
-    .eq('id', userId);
-
-  if (updateError) throw updateError;
-  localStorage.removeItem(PROFILE_CACHE_KEY);
-};
-
-// --- Trades Management ---
 
 export const getStoredTrades = async (userId?: string): Promise<Trade[]> => {
   try {
@@ -226,10 +162,9 @@ export const getStoredTrades = async (userId?: string): Promise<Trade[]> => {
 
 export const saveTrade = async (trade: Trade): Promise<void> => {
   const { data: { session } } = await supabase.auth.getSession();
-  if (!session) throw new Error("AUTH_SESSION_MISSING: Login required to save trades.");
+  if (!session) throw new Error("Login required to save trades.");
 
   const isTargetAdmin = session.user.email === 'mangeshpotale09@gmail.com';
-  // CRITICAL: Ensure we are sending the authenticated user's ID for the row unless admin
   const targetUserId = isTargetAdmin ? trade.userId : session.user.id;
 
   const payload = {
@@ -242,7 +177,6 @@ export const saveTrade = async (trade: Trade): Promise<void> => {
     exit_price: trade.exitPrice || null,
     quantity: trade.quantity,
     entry_date: trade.entryDate,
-    // Fix: Changed trade.exit_date to trade.exitDate as defined in the Trade interface
     exit_date: trade.exitDate || null,
     fees: trade.fees,
     status: trade.status,
@@ -256,19 +190,70 @@ export const saveTrade = async (trade: Trade): Promise<void> => {
     strategies: trade.strategies
   };
   
-  console.debug("Saving trade payload:", payload);
   const { error } = await supabase.from('trades').upsert(payload, { onConflict: 'id' });
-  
-  if (error) {
-    console.error("Save Trade Error:", error);
-    throw new Error(`DB_SYNC_FAIL: ${error.message} (Code: ${error.code}). Ensure user_id matches auth.uid().`);
-  }
+  if (error) throw new Error(`DB SYNC ERROR: ${error.message}`);
 };
 
+// --- Batch Operations for Cloud Sync ---
+
+/**
+ * Persists a collection of trades to the database.
+ */
 export const saveTrades = async (trades: Trade[]): Promise<void> => {
-  for (const trade of trades) {
-    await saveTrade(trade);
-  }
+  if (trades.length === 0) return;
+  
+  const payloads = trades.map(trade => ({
+    id: trade.id,
+    user_id: trade.userId,
+    symbol: trade.symbol,
+    type: trade.type,
+    side: trade.side,
+    entry_price: trade.entryPrice,
+    exit_price: trade.exitPrice || null,
+    quantity: trade.quantity,
+    entry_date: trade.entryDate,
+    exit_date: trade.exitDate || null,
+    fees: trade.fees,
+    status: trade.status,
+    tags: trade.tags,
+    notes: trade.notes,
+    option_details: trade.optionDetails || null,
+    ai_review: trade.aiReview || null,
+    attachments: trade.attachments || [],
+    emotions: trade.emotions,
+    mistakes: trade.mistakes,
+    strategies: trade.strategies
+  }));
+
+  const { error } = await supabase.from('trades').upsert(payloads, { onConflict: 'id' });
+  if (error) throw error;
+};
+
+/**
+ * Persists a collection of user profiles to the database.
+ */
+export const saveUsers = async (users: User[]): Promise<void> => {
+  if (users.length === 0) return;
+  
+  const payloads = users.map(user => ({
+    id: user.id,
+    display_id: user.displayId,
+    email: user.email,
+    name: user.name,
+    mobile: user.mobile,
+    role: user.role,
+    status: user.status,
+    joined_at: user.joinedAt,
+    own_referral_code: user.ownReferralCode,
+    payment_screenshot: user.paymentScreenshot,
+    selected_plan: user.selectedPlan,
+    amount_paid: user.amountPaid,
+    expiry_date: user.expiryDate,
+    is_paid: user.isPaid
+  }));
+
+  const { error } = await supabase.from('profiles').upsert(payloads, { onConflict: 'id' });
+  if (error) throw error;
 };
 
 export const deleteTradeFromDB = async (id: string): Promise<void> => {
@@ -276,7 +261,55 @@ export const deleteTradeFromDB = async (id: string): Promise<void> => {
   if (error) throw error;
 };
 
-// --- Admin Helpers ---
+// --- Auth Methods ---
+export const registerUser = async (data: any): Promise<User | null> => {
+  const { email, password, name, mobile } = data;
+  const { error } = await supabase.auth.signUp({
+    email: email.toLowerCase().trim(),
+    password,
+    options: { data: { name, mobile } }
+  });
+  if (error) throw error;
+  return getCurrentUser();
+};
+
+export const validateLogin = async (email: string, password: string): Promise<User | null> => {
+  const { error } = await supabase.auth.signInWithPassword({
+    email: email.toLowerCase().trim(),
+    password
+  });
+  if (error) throw error;
+  return getCurrentUser();
+};
+
+export const resetUserPassword = async (email: string, mobile: string, newPass: string): Promise<boolean> => {
+  const { error } = await supabase.auth.updateUser({ password: newPass });
+  return !error;
+};
+
+export const uploadAttachment = async (userId: string, file: File): Promise<string> => {
+  const fileExt = file.name.split('.').pop();
+  const fileName = `${userId}/${crypto.randomUUID()}.${fileExt}`;
+  const { error } = await supabase.storage.from('trade-attachments').upload(fileName, file);
+  if (error) throw error;
+  const { data: { publicUrl } } = supabase.storage.from('trade-attachments').getPublicUrl(fileName);
+  return publicUrl;
+};
+
+export const submitPaymentProof = async (userId: string, plan: PlanType, file: File): Promise<void> => {
+  const fileExt = file.name.split('.').pop();
+  const fileName = `${userId}/proof_${crypto.randomUUID()}.${fileExt}`;
+  const { error: uploadError } = await supabase.storage.from('payment-proofs').upload(fileName, file);
+  if (uploadError) throw uploadError;
+  const { data: { publicUrl } } = supabase.storage.from('payment-proofs').getPublicUrl(fileName);
+  const { error: updateError } = await supabase.from('profiles').update({
+    payment_screenshot: publicUrl,
+    selected_plan: plan,
+    status: UserStatus.WAITING_APPROVAL
+  }).eq('id', userId);
+  if (updateError) throw updateError;
+  localStorage.removeItem(PROFILE_CACHE_KEY);
+};
 
 export const getRegisteredUsers = async (): Promise<User[]> => {
   const { data, error } = await supabase.from('profiles').select('*').order('joined_at', { ascending: false });
@@ -299,80 +332,6 @@ export const getRegisteredUsers = async (): Promise<User[]> => {
   }));
 };
 
-export const saveUsers = async (users: User[]): Promise<void> => {
-  for (const user of users) {
-    const payload = {
-      id: user.id,
-      display_id: user.displayId,
-      email: user.email,
-      name: user.name,
-      mobile: user.mobile,
-      role: user.role,
-      status: user.status,
-      joined_at: user.joinedAt,
-      own_referral_code: user.ownReferralCode,
-      payment_screenshot: user.paymentScreenshot,
-      selected_plan: user.selectedPlan,
-      is_paid: user.isPaid
-    };
-    const { error } = await supabase.from('profiles').upsert(payload, { onConflict: 'id' });
-    if (error) throw error;
-  }
-};
-
-export const getAdminOverviewStats = async () => {
-  const [u, t, tx, p] = await Promise.all([
-    supabase.from('profiles').select('*', { count: 'exact', head: true }),
-    supabase.from('trades').select('*', { count: 'exact', head: true }),
-    supabase.from('transactions').select('*', { count: 'exact', head: true }),
-    supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('status', UserStatus.WAITING_APPROVAL)
-  ]);
-  return { totalUsers: u.count || 0, totalTrades: t.count || 0, totalTransactions: tx.count || 0, pendingApprovals: p.count || 0 };
-};
-
-export const updateUserStatus = async (userId: string, status: UserStatus): Promise<void> => {
-  let updatePayload: any = { status, is_paid: status === UserStatus.APPROVED };
-
-  if (status === UserStatus.APPROVED) {
-    // Fetch user's requested plan to calculate expiry and amount
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('selected_plan')
-      .eq('id', userId)
-      .maybeSingle();
-
-    if (profile?.selected_plan) {
-      const now = new Date();
-      let daysToAdd = 30;
-      let price = 299;
-
-      if (profile.selected_plan === PlanType.SIX_MONTHS) {
-        daysToAdd = 180;
-        price = 599;
-      } else if (profile.selected_plan === PlanType.ANNUAL) {
-        daysToAdd = 365;
-        price = 999;
-      }
-
-      const expiryDate = new Date(now.getTime() + daysToAdd * 24 * 60 * 60 * 1000);
-      updatePayload.expiry_date = expiryDate.toISOString();
-      updatePayload.amount_paid = price;
-    }
-  } else if (status === UserStatus.PENDING || status === UserStatus.REJECTED) {
-    updatePayload.is_paid = false;
-    updatePayload.expiry_date = null;
-    updatePayload.amount_paid = 0;
-  }
-
-  const { error } = await supabase
-    .from('profiles')
-    .update(updatePayload)
-    .eq('id', userId);
-  
-  if (error) throw error;
-  localStorage.removeItem(PROFILE_CACHE_KEY);
-};
-
 export const getTransactions = async (): Promise<Transaction[]> => {
   const { data, error } = await supabase.from('transactions').select('*').order('timestamp', { ascending: false });
   if (error) throw error;
@@ -390,36 +349,46 @@ export const getTransactions = async (): Promise<Transaction[]> => {
   }));
 };
 
+export const getAdminOverviewStats = async () => {
+  const [u, t, p] = await Promise.all([
+    supabase.from('profiles').select('*', { count: 'exact', head: true }),
+    supabase.from('trades').select('*', { count: 'exact', head: true }),
+    supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('status', UserStatus.WAITING_APPROVAL)
+  ]);
+  return { totalUsers: u.count || 0, totalTrades: t.count || 0, totalTransactions: 0, pendingApprovals: p.count || 0 };
+};
+
+export const updateUserStatus = async (userId: string, status: UserStatus): Promise<void> => {
+  let updatePayload: any = { status, is_paid: status === UserStatus.APPROVED };
+  if (status === UserStatus.APPROVED) {
+    const { data: profile } = await supabase.from('profiles').select('selected_plan').eq('id', userId).maybeSingle();
+    if (profile?.selected_plan) {
+      const now = new Date();
+      let days = 30;
+      let price = 299;
+      if (profile.selected_plan === PlanType.SIX_MONTHS) { days = 180; price = 599; }
+      else if (profile.selected_plan === PlanType.ANNUAL) { days = 365; price = 999; }
+      updatePayload.expiry_date = new Date(now.getTime() + days * 86400000).toISOString();
+      updatePayload.amount_paid = price;
+    }
+  }
+  const { error } = await supabase.from('profiles').update(updatePayload).eq('id', userId);
+  if (error) throw error;
+  localStorage.removeItem(PROFILE_CACHE_KEY);
+};
+
 export const exportUsersToCSV = (users: User[]): void => {
   if (users.length === 0) return;
-  const headers = [
-    'ID', 
-    'Identity', 
-    'Plan Requested', 
-    'Plan Start Date', 
-    'Plan End Date', 
-    'Amount Paid'
-  ];
-  
-  const rows = users.map(u => {
-    const startDate = u.joinedAt ? new Date(u.joinedAt).toLocaleDateString() : 'N/A';
-    const endDate = u.expiryDate ? new Date(u.expiryDate).toLocaleDateString() : 'N/A';
-    const identity = `"${u.name} (${u.email})"`;
-    const amount = u.amountPaid ? `₹${u.amountPaid.toLocaleString()}` : '0';
-    
-    return [
-      u.displayId,
-      identity,
-      u.selectedPlan || 'NONE',
-      startDate,
-      endDate,
-      amount
-    ];
-  });
-  
+  const headers = ['ID', 'Identity', 'Plan', 'Start Date', 'End Date', 'Amount'];
+  const rows = users.map(u => [
+    u.displayId, `"${u.name} (${u.email})"`, u.selectedPlan || 'NONE',
+    u.joinedAt ? new Date(u.joinedAt).toLocaleDateString() : 'N/A',
+    u.expiryDate ? new Date(u.expiryDate).toLocaleDateString() : 'N/A',
+    u.amountPaid ? `₹${u.amountPaid}` : '0'
+  ]);
   const csvContent = "data:text/csv;charset=utf-8," + [headers, ...rows].map(e => e.join(",")).join("\n");
   const link = document.createElement("a");
   link.setAttribute("href", encodeURI(csvContent));
-  link.setAttribute("download", `TradeMind_User_Report_${new Date().toISOString().split('T')[0]}.csv`);
+  link.setAttribute("download", `TradeMind_Report_${new Date().toISOString().split('T')[0]}.csv`);
   link.click();
 };

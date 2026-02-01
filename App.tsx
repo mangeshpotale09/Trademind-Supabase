@@ -9,7 +9,7 @@ import {
 } from './services/storageService';
 import { supabase } from './services/supabaseClient';
 
-// Critical UI Components
+// Critical UI Components (Sync Loaded)
 import AuthView from './components/AuthView';
 import TradeList from './components/TradeList';
 import TradeDetail from './components/TradeDetail';
@@ -17,7 +17,7 @@ import TradeEntryForm from './components/TradeEntryForm';
 import PaymentView from './components/PaymentView';
 import UserVerificationStatus from './components/UserVerificationStatus';
 
-// Lazy Components
+// Heavy Feature Views (Lazy Loaded)
 const Dashboard = lazy(() => import('./components/Dashboard'));
 const AnalysisView = lazy(() => import('./components/AnalysisView'));
 const MistakesView = lazy(() => import('./components/MistakesView'));
@@ -28,7 +28,7 @@ const AdminView = lazy(() => import('./components/AdminView'));
 const ViewLoader = () => (
   <div className="w-full py-20 flex flex-col items-center justify-center gap-4 animate-in fade-in duration-500">
     <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
-    <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Synchronizing Node...</p>
+    <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Hydrating Feature Node...</p>
   </div>
 );
 
@@ -43,18 +43,27 @@ const App: React.FC = () => {
   const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
 
   const syncIdentity = useCallback(async (session: any) => {
-    // Return early if we already have the user to save cycles
-    if (currentUser && currentUser.id === session?.user?.id) return;
+    // If we're already set up for this user, don't re-run expensive profile fetch
+    if (currentUser?.id === session?.user?.id) return;
     
     const user = await getCurrentUser(session);
     setCurrentUser(user);
     setIsInitializing(false);
-  }, [currentUser]);
+  }, [currentUser?.id]);
 
   useEffect(() => {
     let authSubscription: any;
 
     const init = async () => {
+      // 1. Check for existing session first (Immediate)
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        await syncIdentity(session);
+      } else {
+        setIsInitializing(false);
+      }
+
+      // 2. Set up listener for changes (Deferred)
       const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (session) {
           syncIdentity(session);
@@ -65,19 +74,13 @@ const App: React.FC = () => {
         }
       });
       authSubscription = data.subscription;
-
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        syncIdentity(session);
-      } else {
-        setIsInitializing(false);
-      }
     };
 
     init();
     return () => { if (authSubscription) authSubscription.unsubscribe(); };
   }, [syncIdentity]);
 
+  // Lazy load trades only when user is ready
   useEffect(() => {
     if (currentUser?.id && (currentUser.status === UserStatus.APPROVED || currentUser.role === UserRole.ADMIN)) {
       setIsLoading(true);
@@ -89,12 +92,14 @@ const App: React.FC = () => {
   }, [currentUser?.id, currentUser?.status, currentUser?.role]);
 
   const handleLogout = async () => {
+    setIsLoading(true);
     await supabase.auth.signOut();
     localStorage.removeItem('tm_cached_profile');
     setCurrentUser(null);
+    setIsLoading(false);
   };
 
-  if (isInitializing) return null; // Let the splash screen handle this
+  if (isInitializing) return null; // Splash screen handles the initial wait
 
   if (!currentUser) return <AuthView onAuthComplete={setCurrentUser} />;
 
@@ -133,9 +138,18 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* Mobile-optimized bottom nav with haptic feel */}
       <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-[#0e1421]/90 backdrop-blur-xl border border-[#1e293b] p-1.5 rounded-3xl shadow-2xl flex items-center gap-1.5 max-w-[96vw] overflow-x-auto no-scrollbar">
         {navs.map((tab) => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`px-5 py-3 rounded-2xl transition-all whitespace-nowrap ${activeTab === tab.id ? `${tab.color} text-slate-900 shadow-lg font-black scale-105` : 'text-slate-500 hover:text-slate-200 hover:bg-white/5'}`}>
+          <button 
+            key={tab.id} 
+            onClick={() => setActiveTab(tab.id as any)} 
+            className={`px-5 py-3 rounded-2xl transition-all whitespace-nowrap active:scale-90 ${
+              activeTab === tab.id 
+                ? `${tab.color} text-slate-900 shadow-lg font-black scale-105` 
+                : 'text-slate-500 hover:text-slate-200'
+            }`}
+          >
             <span className="text-[10px] uppercase tracking-wider">{tab.label}</span>
           </button>
         ))}
@@ -148,14 +162,14 @@ const App: React.FC = () => {
                <span className="bg-emerald-500/10 text-emerald-400 text-[9px] font-black px-2 py-0.5 rounded border border-emerald-500/20 uppercase tracking-[0.2em]">{currentUser.displayId}</span>
                <div className="flex items-center gap-2">
                   <div className={`w-1.5 h-1.5 rounded-full ${isLoading ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'}`}></div>
-                  <span className="text-[8px] font-black uppercase tracking-widest text-slate-500">Node: Verified</span>
+                  <span className="text-[8px] font-black uppercase tracking-widest text-slate-500">Live: Cloud Sync</span>
                </div>
             </div>
             <h1 className="text-4xl font-black text-white tracking-tighter">TradeMind <span className="text-emerald-500">AI</span></h1>
           </div>
           
           <div className="flex items-center gap-3">
-            <button onClick={handleLogout} className="px-5 py-3 rounded-xl bg-white/5 text-slate-500 hover:text-red-400 text-[9px] font-black uppercase tracking-widest">Exit</button>
+            <button onClick={handleLogout} className="px-5 py-3 rounded-xl bg-white/5 text-slate-500 hover:text-red-400 text-[9px] font-black uppercase tracking-widest">Logout</button>
             <button onClick={() => { setEditingTrade(null); setIsEntryFormOpen(true); }} className="bg-emerald-500 hover:bg-emerald-400 text-slate-900 font-black px-8 py-3 rounded-xl shadow-xl text-[10px] uppercase tracking-widest">Execute Trade</button>
           </div>
         </header>

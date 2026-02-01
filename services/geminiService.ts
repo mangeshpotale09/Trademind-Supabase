@@ -2,6 +2,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Trade, AIReview, GroundingSource } from "../types";
 
+// AI Coach Audit: Evaluates individual trades with Google Search grounding for market context.
 export const getAIReviewForTrade = async (trade: Trade): Promise<AIReview | null> => {
   if (!process.env.API_KEY) return null;
   
@@ -16,7 +17,7 @@ export const getAIReviewForTrade = async (trade: Trade): Promise<AIReview | null
       ${JSON.stringify(trade, null, 2)}
       `,
       config: {
-        systemInstruction: "You are a world-class trading psychologist and risk manager. Evaluate the trade based on logic, discipline, and risk/reward. Return only the JSON review following the provided schema.",
+        systemInstruction: "You are a world-class trading psychologist and risk manager. Evaluate the trade based on logic, discipline, and risk/reward. Return only the JSON review following the provided schema. Use Google Search to cross-reference market context for the trade date and symbol if helpful.",
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -28,15 +29,31 @@ export const getAIReviewForTrade = async (trade: Trade): Promise<AIReview | null
             improvement: { type: Type.STRING, description: "One actionable improvement" }
           },
           required: ["score", "well", "wrong", "violations", "improvement"]
-        }
+        },
+        tools: [{ googleSearch: {} }]
       }
     });
 
     const text = response.text || '';
     const review = JSON.parse(text.trim()) as AIReview;
     
+    // Extract grounding sources from search results to display in UI
+    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+    const sources: GroundingSource[] = [];
+    if (groundingChunks) {
+      groundingChunks.forEach((chunk: any) => {
+        if (chunk.web) {
+          sources.push({
+            title: chunk.web.title,
+            uri: chunk.web.uri
+          });
+        }
+      });
+    }
+    
     return {
       ...review,
+      sources: sources.length > 0 ? sources : undefined,
       timestamp: Date.now()
     };
   } catch (error) {
@@ -45,6 +62,7 @@ export const getAIReviewForTrade = async (trade: Trade): Promise<AIReview | null
   }
 };
 
+// Weekly Performance Audit: Analyzes batches of trades for behavioral patterns.
 export const getWeeklyInsights = async (trades: Trade[]): Promise<string | null> => {
   if (!process.env.API_KEY || trades.length === 0) return null;
   
@@ -72,7 +90,7 @@ export const getWeeklyInsights = async (trades: Trade[]): Promise<string | null>
   }
 };
 
-// Fix: Updated model to gemini-3-pro-preview for text-based analysis with search grounding
+// Natural Language History Query: Answers specific performance questions using search grounding.
 export const queryTradeHistory = async (query: string, trades: Trade[]): Promise<string | null> => {
   if (!process.env.API_KEY) return null;
   
@@ -94,7 +112,7 @@ export const queryTradeHistory = async (query: string, trades: Trade[]): Promise
 
     let text = response.text || '';
     
-    // Fix: Extract grounding chunks and append to the text response as required by the guidelines
+    // Extract grounding chunks and append to the text response as required by the guidelines
     const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
     if (groundingChunks && groundingChunks.length > 0) {
       const links = groundingChunks
