@@ -111,7 +111,9 @@ const fetchAndCacheProfile = async (uid: string, email: string, metadata: any): 
         joinedAt: profileData.joined_at,
         ownReferralCode: profileData.own_referral_code,
         paymentScreenshot: profileData.payment_screenshot,
-        selectedPlan: profileData.selected_plan as PlanType
+        selectedPlan: profileData.selected_plan as PlanType,
+        amountPaid: profileData.amount_paid,
+        expiryDate: profileData.expiry_date
       };
     }
 
@@ -289,7 +291,9 @@ export const getRegisteredUsers = async (): Promise<User[]> => {
     joinedAt: p.joined_at,
     ownReferralCode: p.own_referral_code,
     paymentScreenshot: p.payment_screenshot,
-    selectedPlan: p.selected_plan as PlanType
+    selectedPlan: p.selected_plan as PlanType,
+    amountPaid: p.amount_paid,
+    expiryDate: p.expiry_date
   }));
 };
 
@@ -347,4 +351,38 @@ export const getTransactions = async (): Promise<Transaction[]> => {
     timestamp: tx.timestamp,
     status: tx.status
   }));
+};
+
+export const exportUsersToCSV = (users: User[]): void => {
+  if (users.length === 0) return;
+  const headers = [
+    'ID', 
+    'Identity', 
+    'Plan Requested', 
+    'Plan Start Date', 
+    'Plan End Date', 
+    'Amount Paid'
+  ];
+  
+  const rows = users.map(u => {
+    const startDate = u.joinedAt ? new Date(u.joinedAt).toLocaleDateString() : 'N/A';
+    const endDate = u.expiryDate ? new Date(u.expiryDate).toLocaleDateString() : 'N/A';
+    const identity = `"${u.name} (${u.email})"`;
+    const amount = u.amountPaid ? `₹${u.amountPaid.toLocaleString()}` : '0';
+    
+    return [
+      u.displayId,
+      identity,
+      u.selectedPlan || 'NONE',
+      startDate,
+      endDate,
+      amount
+    ];
+  });
+  
+  const csvContent = "data:text/csv;charset=utf-8," + [headers, ...rows].map(e => e.join(",")).join("\n");
+  const link = document.createElement("a");
+  link.setAttribute("href", encodeURI(csvContent));
+  link.setAttribute("download", `TradeMind_User_Report_${new Date().toISOString().split('T')[0]}.csv`);
+  link.click();
 };

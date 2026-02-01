@@ -1,6 +1,6 @@
 
 import React, { useMemo, useState, useEffect } from 'react';
-import { getRegisteredUsers, getStoredTrades, updateUserStatus, getTransactions, getAdminOverviewStats } from '../services/storageService';
+import { getRegisteredUsers, getStoredTrades, updateUserStatus, getTransactions, getAdminOverviewStats, exportUsersToCSV } from '../services/storageService';
 import { User, UserStatus, Trade, Transaction } from '../types';
 
 type AdminTab = 'overview' | 'users' | 'tape' | 'ledger';
@@ -61,6 +61,10 @@ const AdminView: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleExportUsers = () => {
+    exportUsersToCSV(filteredUsers);
   };
 
   const tabs = [
@@ -130,8 +134,8 @@ const AdminView: React.FC = () => {
 
           {activeSubTab === 'users' && (
             <div className="space-y-6">
-              <div className="flex flex-col md:flex-row justify-between gap-4">
-                <div className="relative flex-1 max-w-md">
+              <div className="flex flex-col md:flex-row justify-between items-center gap-4">
+                <div className="relative flex-1 max-w-md w-full">
                   <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
                   <input 
                     type="text" 
@@ -141,6 +145,13 @@ const AdminView: React.FC = () => {
                     className="w-full bg-[#0e1421] border border-[#1e293b] rounded-2xl pl-12 pr-6 py-4 focus:ring-2 focus:ring-purple-500 outline-none text-white text-sm"
                   />
                 </div>
+                <button 
+                  onClick={handleExportUsers}
+                  className="flex items-center gap-2 px-6 py-3 bg-blue-500/10 border border-blue-500/20 rounded-2xl text-blue-400 font-black text-[10px] uppercase tracking-widest hover:bg-blue-500/20 transition-all shadow-lg w-full md:w-auto justify-center"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                  Extract Report
+                </button>
               </div>
 
               <div className="bg-[#0e1421] border border-[#1e293b] rounded-[2.5rem] overflow-hidden shadow-2xl">
