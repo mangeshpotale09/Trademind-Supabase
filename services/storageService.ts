@@ -111,7 +111,8 @@ const fetchAndCacheProfile = async (uid: string, email: string, metadata: any): 
         joinedAt: profileData.joined_at,
         ownReferralCode: profileData.own_referral_code,
         paymentScreenshot: profileData.payment_screenshot,
-        selected_plan: profileData.selected_plan as PlanType,
+        // Fix: Use selectedPlan to match the User interface property name
+        selectedPlan: profileData.selected_plan as PlanType,
         amountPaid: profileData.amount_paid,
         expiryDate: profileData.expiry_date
       };
