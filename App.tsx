@@ -9,7 +9,7 @@ import {
 } from './services/storageService';
 import { supabase } from './services/supabaseClient';
 
-// Critical UI Components (Sync Loaded)
+// Critical UI Components (Sync Loaded for instant gatekeeping)
 import AuthView from './components/AuthView';
 import TradeList from './components/TradeList';
 import TradeDetail from './components/TradeDetail';
@@ -43,19 +43,20 @@ const App: React.FC = () => {
   const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
 
   const syncIdentity = useCallback(async (session: any) => {
-    // If we're already set up for this user, don't re-run expensive profile fetch
-    if (currentUser?.id === session?.user?.id) return;
-    
-    const user = await getCurrentUser(session);
-    setCurrentUser(user);
-    setIsInitializing(false);
-  }, [currentUser?.id]);
+    try {
+      const user = await getCurrentUser(session);
+      setCurrentUser(user);
+    } catch (e) {
+      console.error("Identity Sync Failed", e);
+    } finally {
+      setIsInitializing(false);
+    }
+  }, []);
 
   useEffect(() => {
     let authSubscription: any;
 
     const init = async () => {
-      // 1. Check for existing session first (Immediate)
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
         await syncIdentity(session);
@@ -63,7 +64,6 @@ const App: React.FC = () => {
         setIsInitializing(false);
       }
 
-      // 2. Set up listener for changes (Deferred)
       const { data } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (session) {
           syncIdentity(session);
@@ -80,9 +80,11 @@ const App: React.FC = () => {
     return () => { if (authSubscription) authSubscription.unsubscribe(); };
   }, [syncIdentity]);
 
-  // Lazy load trades only when user is ready
+  // Restricted data loading: ONLY for approved users or admins
   useEffect(() => {
-    if (currentUser?.id && (currentUser.status === UserStatus.APPROVED || currentUser.role === UserRole.ADMIN)) {
+    const isApproved = currentUser?.status === UserStatus.APPROVED || currentUser?.role === UserRole.ADMIN;
+    
+    if (currentUser?.id && isApproved) {
       setIsLoading(true);
       getStoredTrades(currentUser.id)
         .then(setTrades)
@@ -99,26 +101,49 @@ const App: React.FC = () => {
     setIsLoading(false);
   };
 
-  if (isInitializing) return null; // Splash screen handles the initial wait
+  // 1. BOOTING STATE
+  if (isInitializing) return null; 
 
+  // 2. UNAUTHENTICATED STATE
   if (!currentUser) return <AuthView onAuthComplete={setCurrentUser} />;
 
-  if (currentUser.role === UserRole.USER && currentUser.status === UserStatus.PENDING) {
-    return <PaymentView user={currentUser} onPaymentSubmitted={async () => {
-      setIsLoading(true);
-      setCurrentUser(await getCurrentUser());
-      setIsLoading(false);
-    }} />;
+  // 3. PAYMENT/VERIFICATION GATING (MANDATORY)
+  const isAuthorized = currentUser.role === UserRole.ADMIN || currentUser.status === UserStatus.APPROVED;
+
+  if (!isAuthorized) {
+    // If new registration or pending payment
+    if (currentUser.status === UserStatus.PENDING) {
+      return (
+        <PaymentView 
+          user={currentUser} 
+          onPaymentSubmitted={async () => {
+            setIsLoading(true);
+            const updatedUser = await getCurrentUser();
+            setCurrentUser(updatedUser);
+            setIsLoading(false);
+          }} 
+        />
+      );
+    }
+
+    // If waiting for admin approval or rejected
+    if (currentUser.status === UserStatus.WAITING_APPROVAL || currentUser.status === UserStatus.REJECTED) {
+      return (
+        <UserVerificationStatus 
+          user={currentUser} 
+          onLogout={handleLogout} 
+          onRetry={async () => {
+            await supabase.from('profiles').update({ status: UserStatus.PENDING }).eq('id', currentUser.id);
+            localStorage.removeItem('tm_cached_profile');
+            const updatedUser = await getCurrentUser();
+            setCurrentUser(updatedUser);
+          }} 
+        />
+      );
+    }
   }
 
-  if (currentUser.role === UserRole.USER && (currentUser.status === UserStatus.WAITING_APPROVAL || currentUser.status === UserStatus.REJECTED)) {
-    return <UserVerificationStatus user={currentUser} onLogout={handleLogout} onRetry={async () => {
-      await supabase.from('profiles').update({ status: UserStatus.PENDING }).eq('id', currentUser.id);
-      localStorage.removeItem('tm_cached_profile');
-      setCurrentUser(await getCurrentUser());
-    }} />;
-  }
-
+  // 4. MAIN AUTHORIZED DASHBOARD
   const navs = [
     { id: 'dashboard', label: 'Dash', color: 'bg-emerald-500' },
     { id: 'journal', label: 'Log', color: 'bg-cyan-500' },
@@ -138,7 +163,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Mobile-optimized bottom nav with haptic feel */}
       <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-[#0e1421]/90 backdrop-blur-xl border border-[#1e293b] p-1.5 rounded-3xl shadow-2xl flex items-center gap-1.5 max-w-[96vw] overflow-x-auto no-scrollbar">
         {navs.map((tab) => (
           <button 
@@ -162,7 +186,7 @@ const App: React.FC = () => {
                <span className="bg-emerald-500/10 text-emerald-400 text-[9px] font-black px-2 py-0.5 rounded border border-emerald-500/20 uppercase tracking-[0.2em]">{currentUser.displayId}</span>
                <div className="flex items-center gap-2">
                   <div className={`w-1.5 h-1.5 rounded-full ${isLoading ? 'bg-amber-500 animate-pulse' : 'bg-emerald-500'}`}></div>
-                  <span className="text-[8px] font-black uppercase tracking-widest text-slate-500">Live: Cloud Sync</span>
+                  <span className="text-[8px] font-black uppercase tracking-widest text-slate-500">Node: {currentUser.status}</span>
                </div>
             </div>
             <h1 className="text-4xl font-black text-white tracking-tighter">TradeMind <span className="text-emerald-500">AI</span></h1>

@@ -38,6 +38,7 @@ export const getCurrentUser = async (passedSession?: any): Promise<User | null> 
     const ADMIN_EMAIL = 'mangeshpotale09@gmail.com';
     const isHardcodedAdmin = email === ADMIN_EMAIL;
 
+    // Root Override
     if (isHardcodedAdmin) {
       const admin: User = {
         id: session.user.id,
@@ -54,11 +55,13 @@ export const getCurrentUser = async (passedSession?: any): Promise<User | null> 
       return admin;
     }
 
+    // Try cache for speed
     const cachedStr = localStorage.getItem(PROFILE_CACHE_KEY);
     if (cachedStr) {
       try {
         const cached = JSON.parse(cachedStr) as User;
         if (cached.id === session.user.id) {
+          // Re-validate in background
           fetchAndCacheProfile(session.user.id, session.user.email, session.user.user_metadata);
           return cached;
         }
@@ -86,6 +89,8 @@ const fetchAndCacheProfile = async (uid: string, email: string, metadata: any): 
 
     let userObj: User;
 
+    // If profile row doesn't exist yet, this is a fresh registration.
+    // We MUST force PENDING status.
     if (!profileData) {
       userObj = {
         id: uid,
@@ -110,7 +115,8 @@ const fetchAndCacheProfile = async (uid: string, email: string, metadata: any): 
         status: profileData.status as UserStatus,
         joinedAt: profileData.joined_at,
         ownReferralCode: profileData.own_referral_code,
-        payment_screenshot: profileData.payment_screenshot,
+        // Fix: Use camelCase key 'paymentScreenshot' instead of snake_case 'payment_screenshot'
+        paymentScreenshot: profileData.payment_screenshot,
         selectedPlan: profileData.selected_plan as PlanType,
         amountPaid: profileData.amount_paid,
         expiryDate: profileData.expiry_date
@@ -177,6 +183,7 @@ export const saveTrade = async (trade: Trade): Promise<void> => {
     exit_price: trade.exitPrice || null,
     quantity: trade.quantity,
     entry_date: trade.entryDate,
+    // Fix: Using trade.exitDate correctly as per Trade interface
     exit_date: trade.exitDate || null,
     fees: trade.fees,
     status: trade.status,
