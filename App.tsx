@@ -48,6 +48,7 @@ const App: React.FC = () => {
       setCurrentUser(user);
     } catch (e) {
       console.error("Identity Sync Failed", e);
+      setCurrentUser(null);
     } finally {
       setIsInitializing(false);
     }
@@ -57,10 +58,15 @@ const App: React.FC = () => {
     let authSubscription: any;
 
     const init = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        await syncIdentity(session);
-      } else {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          await syncIdentity(session);
+        } else {
+          setIsInitializing(false);
+        }
+      } catch (err) {
+        console.error("Auth Init Error", err);
         setIsInitializing(false);
       }
 
@@ -101,17 +107,18 @@ const App: React.FC = () => {
     setIsLoading(false);
   };
 
-  // 1. BOOTING STATE
+  // 1. BOOTING STATE - Show nothing while checking session
   if (isInitializing) return null; 
 
-  // 2. UNAUTHENTICATED STATE
+  // 2. LOGIN PAGE - Shown if no user session exists
   if (!currentUser) return <AuthView onAuthComplete={setCurrentUser} />;
 
-  // 3. PAYMENT/VERIFICATION GATING (MANDATORY)
+  // 3. PAYMENT & VERIFICATION GATING
+  // This ensures no direct access to the app after registration without payment
   const isAuthorized = currentUser.role === UserRole.ADMIN || currentUser.status === UserStatus.APPROVED;
 
   if (!isAuthorized) {
-    // If new registration or pending payment
+    // Force Payment View for new or pending users
     if (currentUser.status === UserStatus.PENDING) {
       return (
         <PaymentView 
@@ -126,7 +133,7 @@ const App: React.FC = () => {
       );
     }
 
-    // If waiting for admin approval or rejected
+    // Show Verification Status for users who have paid but aren't approved yet
     if (currentUser.status === UserStatus.WAITING_APPROVAL || currentUser.status === UserStatus.REJECTED) {
       return (
         <UserVerificationStatus 
@@ -143,7 +150,7 @@ const App: React.FC = () => {
     }
   }
 
-  // 4. MAIN AUTHORIZED DASHBOARD
+  // 4. MAIN AUTHORIZED INTERFACE (Dashboard, Journal, etc.)
   const navs = [
     { id: 'dashboard', label: 'Dash', color: 'bg-emerald-500' },
     { id: 'journal', label: 'Log', color: 'bg-cyan-500' },

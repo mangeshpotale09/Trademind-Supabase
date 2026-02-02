@@ -10,13 +10,20 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     
-    <!-- Unregister Service Worker to fix 'Offline Copy' errors on Vercel/Mobile -->
+    <!-- Robust fix for 'Offline Copy' error on Vercel/Mobile -->
     <script>
+      // 1. Unregister all Service Workers
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.getRegistrations().then(function(registrations) {
           for(let registration of registrations) {
             registration.unregister();
           }
+        });
+      }
+      // 2. Clear all Caches to ensure fresh login page
+      if ('caches' in window) {
+        caches.keys().then(function(names) {
+          for (let name of names) caches.delete(name);
         });
       }
     </script>
@@ -92,9 +99,10 @@
     <div id="root"></div>
     <script type="module" src="./index.tsx"></script>
     <script>
+      // Automatically fade out splash screen when React mounts
       window.addEventListener('load', () => {
         const checkReady = setInterval(() => {
-          if (document.querySelector('#root > div')) {
+          if (document.querySelector('#root > div') || document.querySelector('#root > form')) {
             const s = document.getElementById('splash');
             if (s) { 
               s.style.opacity = '0'; 
@@ -102,7 +110,7 @@
             }
             clearInterval(checkReady);
           }
-        }, 100);
+        }, 50);
       });
     </script>
   </body>
