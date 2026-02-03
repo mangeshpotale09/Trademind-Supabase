@@ -1,7 +1,7 @@
 
 import React, { useMemo, useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { Trade, TradeStatus } from '../types';
+import { Trade, TradeStatus, TradeType } from '../types';
 import { calculatePnL, calculateGrossPnL } from '../services/storageService';
 
 interface DashboardProps {
@@ -48,6 +48,13 @@ const Dashboard: React.FC<DashboardProps> = ({ trades, onExport }) => {
     const lossCount = losingTrades.length;
     const winRate = closedTrades.length > 0 ? (winCount / closedTrades.length) * 100 : 0;
 
+    // Option Specific Stats
+    const optionTrades = closedTrades.filter(t => t.type === TradeType.OPTION);
+    const winningOptionTrades = optionTrades.filter(t => calculateGrossPnL(t) > 0);
+    const optionWinRate = optionTrades.length > 0 ? (winningOptionTrades.length / optionTrades.length) * 100 : 0;
+    const optionNetPnL = optionTrades.reduce((acc, t) => acc + calculatePnL(t), 0);
+    const optionPnLRatio = totalNetPnL !== 0 ? (optionNetPnL / Math.abs(totalNetPnL)) * 100 : 0;
+
     const totalWinAmount = winningTrades.reduce((acc, t) => acc + calculateGrossPnL(t), 0);
     const totalLossAmount = Math.abs(losingTrades.reduce((acc, t) => acc + calculateGrossPnL(t), 0));
 
@@ -86,7 +93,10 @@ const Dashboard: React.FC<DashboardProps> = ({ trades, onExport }) => {
       bestTradePnL,
       worstTradePnL,
       chartData, 
-      closedCount: closedTrades.length 
+      closedCount: closedTrades.length,
+      optionWinRate,
+      optionPnLRatio,
+      optionCount: optionTrades.length
     };
   }, [filteredTrades]);
 
@@ -112,7 +122,6 @@ const Dashboard: React.FC<DashboardProps> = ({ trades, onExport }) => {
 
   return (
     <div className="space-y-6">
-      {/* Legend-style Header */}
       <div className="flex items-center justify-center gap-8 py-2 mb-2">
         <div className="flex items-center gap-2">
           <div className="w-3 h-3 rounded-full bg-emerald-500"></div>
@@ -152,12 +161,20 @@ const Dashboard: React.FC<DashboardProps> = ({ trades, onExport }) => {
         )}
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <StatCard label="Net P&L" value={`₹${stats.totalNetPnL.toLocaleString()}`} subValue={`Gross: ₹${stats.totalGrossPnL.toLocaleString()}`} trend={stats.totalNetPnL >= 0 ? 'up' : 'down'} color={stats.totalNetPnL >= 0 ? 'text-emerald-400' : 'text-red-400'} />
-        <StatCard label="Total Trades" value={stats.closedCount} subValue="Completed Cycles" color="text-slate-200" />
-        <StatCard label="Largest Win" value={`₹${stats.bestTradePnL.toLocaleString()}`} subValue="Max Realized Profit" color="text-emerald-400" />
-        <StatCard label="Largest Loss" value={`₹${stats.worstTradePnL.toLocaleString()}`} subValue="Max Realized Loss" color="text-red-400" />
-        <StatCard label="Brokerages" value={`₹${stats.totalFees.toLocaleString()}`} subValue="Total Platform Fees" color="text-red-400" />
+        <StatCard label="Win Rate" value={`${stats.winRate.toFixed(1)}%`} subValue={`${stats.winCount}W / ${stats.lossCount}L`} color="text-cyan-400" />
+        <StatCard label="Option Perf." value={`${stats.optionWinRate.toFixed(1)}%`} subValue={`P&L Ratio: ${stats.optionPnLRatio.toFixed(1)}%`} color="text-purple-400" />
+        <StatCard label="Profit Factor" value={stats.profitFactor.toFixed(2)} subValue="Ratio of Gross P/L" color={stats.profitFactor >= 1.5 ? 'text-emerald-400' : stats.profitFactor < 1 ? 'text-red-400' : 'text-amber-400'} />
+        <StatCard label="Avg RRR" value={`${stats.rrr.toFixed(2)}:1`} subValue="Risk / Reward Ratio" color={stats.rrr >= 1 ? 'text-emerald-400' : 'text-slate-200'} />
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <StatCard label="Avg Win" value={`₹${stats.avgWin.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} subValue="Avg Profit per Win" color="text-emerald-400" />
+        <StatCard label="Avg Loss" value={`₹${stats.avgLoss.toLocaleString(undefined, { maximumFractionDigits: 0 })}`} subValue="Avg Loss per Loss" color="text-red-400" />
+        <StatCard label="Largest Win" value={`₹${stats.bestTradePnL.toLocaleString()}`} subValue="Session Max Profit" color="text-emerald-400" />
+        <StatCard label="Largest Loss" value={`₹${stats.worstTradePnL.toLocaleString()}`} subValue="Session Max Drawdown" color="text-red-400" />
+        <StatCard label="Brokerages" value={`₹${stats.totalFees.toLocaleString()}`} subValue="Cumulative Fees" color="text-slate-500" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -184,7 +201,7 @@ const Dashboard: React.FC<DashboardProps> = ({ trades, onExport }) => {
                   formatter={(value) => [`₹${Number(value).toLocaleString()}`, 'Net P&L']}
                 />
                 <Area 
-                  isAnimationActive={false} /* Mobile optimization: Disable animation */
+                  isAnimationActive={false} 
                   type="monotone" 
                   dataKey="pnl" 
                   stroke="#10b981" 
@@ -203,7 +220,7 @@ const Dashboard: React.FC<DashboardProps> = ({ trades, onExport }) => {
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
-                  isAnimationActive={false} /* Mobile optimization: Disable animation */
+                  isAnimationActive={false} 
                   data={assetDistribution}
                   cx="50%"
                   cy="50%"
