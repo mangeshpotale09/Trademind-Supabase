@@ -115,8 +115,7 @@ const fetchAndCacheProfile = async (uid: string, email: string, metadata: any): 
         status: profileData.status as UserStatus,
         joinedAt: profileData.joined_at,
         ownReferralCode: profileData.own_referral_code,
-        // Fix: Use camelCase key 'paymentScreenshot' instead of snake_case 'payment_screenshot'
-        paymentScreenshot: profileData.payment_screenshot,
+        payment_screenshot: profileData.payment_screenshot,
         selectedPlan: profileData.selected_plan as PlanType,
         amountPaid: profileData.amount_paid,
         expiryDate: profileData.expiry_date
@@ -147,7 +146,7 @@ export const getStoredTrades = async (userId?: string): Promise<Trade[]> => {
       entryPrice: Number(t.entry_price),
       exitPrice: t.exit_price ? Number(t.exit_price) : undefined,
       quantity: Number(t.quantity),
-      entryDate: t.entry_date,
+      entry_date: t.entry_date,
       exitDate: t.exit_date,
       fees: Number(t.fees),
       status: t.status as TradeStatus,
@@ -183,7 +182,6 @@ export const saveTrade = async (trade: Trade): Promise<void> => {
     exit_price: trade.exitPrice || null,
     quantity: trade.quantity,
     entry_date: trade.entryDate,
-    // Fix: Using trade.exitDate correctly as per Trade interface
     exit_date: trade.exitDate || null,
     fees: trade.fees,
     status: trade.status,
@@ -255,6 +253,7 @@ export const saveUsers = async (users: User[]): Promise<void> => {
     payment_screenshot: user.paymentScreenshot,
     selected_plan: user.selectedPlan,
     amount_paid: user.amountPaid,
+    // Fix: Access expiryDate property from user object which adheres to User interface
     expiry_date: user.expiryDate,
     is_paid: user.isPaid
   }));
@@ -397,5 +396,37 @@ export const exportUsersToCSV = (users: User[]): void => {
   const link = document.createElement("a");
   link.setAttribute("href", encodeURI(csvContent));
   link.setAttribute("download", `TradeMind_Report_${new Date().toISOString().split('T')[0]}.csv`);
+  link.click();
+};
+
+export const exportTradesToCSV = (trades: Trade[]): void => {
+  if (trades.length === 0) return;
+  const headers = ['Symbol', 'Type', 'Side', 'Status', 'Entry Date', 'Entry Price', 'Exit Date', 'Exit Price', 'Quantity', 'Fees', 'Net P&L', 'Strategies', 'Mistakes', 'Emotions', 'Notes'];
+  
+  const rows = trades.map(t => {
+    const pnl = calculatePnL(t);
+    return [
+      t.symbol,
+      t.type,
+      t.side,
+      t.status,
+      new Date(t.entryDate).toLocaleString(),
+      t.entryPrice,
+      t.exitDate ? new Date(t.exitDate).toLocaleString() : 'OPEN',
+      t.exitPrice || 0,
+      t.quantity,
+      t.fees,
+      pnl.toFixed(2),
+      `"${t.strategies.join(', ')}"`,
+      `"${t.mistakes.join(', ')}"`,
+      `"${t.emotions.join(', ')}"`,
+      `"${t.notes.replace(/"/g, '""')}"`
+    ];
+  });
+
+  const csvContent = "data:text/csv;charset=utf-8," + [headers, ...rows].map(e => e.join(",")).join("\n");
+  const link = document.createElement("a");
+  link.setAttribute("href", encodeURI(csvContent));
+  link.setAttribute("download", `TradeMind_Entries_${new Date().toISOString().split('T')[0]}.csv`);
   link.click();
 };

@@ -6,7 +6,7 @@ import { calculatePnL, calculateGrossPnL } from '../services/storageService';
 
 interface DashboardProps {
   trades: Trade[];
-  onExport?: () => void;
+  onExport?: (tradesToExport: Trade[]) => void;
 }
 
 type TimeFilter = 'WEEK' | 'MONTH' | '3MONTHS' | '6MONTHS' | '1YEAR' | 'ALL';
@@ -152,7 +152,7 @@ const Dashboard: React.FC<DashboardProps> = ({ trades, onExport }) => {
 
         {onExport && (
           <button 
-            onClick={onExport}
+            onClick={() => onExport(filteredTrades)}
             className="flex items-center gap-2 px-6 py-2 bg-blue-500/10 border border-blue-500/20 rounded-xl text-blue-400 font-black text-[10px] uppercase tracking-widest hover:bg-blue-500/20 transition-all shadow-lg"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>

@@ -5,7 +5,8 @@ import {
   getStoredTrades, 
   saveTrade,
   deleteTradeFromDB,
-  getCurrentUser
+  getCurrentUser,
+  exportTradesToCSV
 } from './services/storageService';
 import { supabase } from './services/supabaseClient';
 
@@ -114,11 +115,9 @@ const App: React.FC = () => {
   if (!currentUser) return <AuthView onAuthComplete={setCurrentUser} />;
 
   // 3. PAYMENT & VERIFICATION GATING
-  // This ensures no direct access to the app after registration without payment
   const isAuthorized = currentUser.role === UserRole.ADMIN || currentUser.status === UserStatus.APPROVED;
 
   if (!isAuthorized) {
-    // Force Payment View for new or pending users
     if (currentUser.status === UserStatus.PENDING) {
       return (
         <PaymentView 
@@ -133,7 +132,6 @@ const App: React.FC = () => {
       );
     }
 
-    // Show Verification Status for users who have paid but aren't approved yet
     if (currentUser.status === UserStatus.WAITING_APPROVAL || currentUser.status === UserStatus.REJECTED) {
       return (
         <UserVerificationStatus 
@@ -150,7 +148,7 @@ const App: React.FC = () => {
     }
   }
 
-  // 4. MAIN AUTHORIZED INTERFACE (Dashboard, Journal, etc.)
+  // 4. MAIN AUTHORIZED INTERFACE
   const navs = [
     { id: 'dashboard', label: 'Dash', color: 'bg-emerald-500' },
     { id: 'journal', label: 'Log', color: 'bg-cyan-500' },
@@ -207,7 +205,7 @@ const App: React.FC = () => {
 
         <div className="animate-in fade-in slide-in-from-bottom-4 duration-1000">
           <Suspense fallback={<ViewLoader />}>
-            {activeTab === 'dashboard' && <Dashboard trades={trades} />}
+            {activeTab === 'dashboard' && <Dashboard trades={trades} onExport={exportTradesToCSV} />}
             {activeTab === 'journal' && <TradeList trades={trades} onSelect={setSelectedTrade} isAdmin={currentUser.role === UserRole.ADMIN} />}
             {activeTab === 'analysis' && <AnalysisView trades={trades} />}
             {activeTab === 'mistakes' && <MistakesView trades={trades} />}
